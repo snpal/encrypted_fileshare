@@ -99,29 +99,223 @@ func someUsefulThings() {
 // This is the type definition for the User struct.
 // A Go struct is like a Python or Java class - it can have attributes
 // (e.g. like the Username attribute) and methods (e.g. like the StoreFile method below).
-type User struct {
-	Username string
-
-	// You can add other attributes here if you want! But note that in order for attributes to
-	// be included when this struct is serialized to/from JSON, they must be capitalized.
-	// On the flipside, if you have an attribute that you want to be able to access from
-	// this struct's methods, but you DON'T want that value to be included in the serialized value
-	// of this struct that's stored in datastore, then you can use a "private" variable (e.g. one that
-	// begins with a lowercase letter).
+type RSAKeys struct {
+	DecKey userlib.PKEDecKey
+	SigKey userlib.DSSignKey
 }
 
-// NOTE: The following methods have toy (insecure!) implementations.
+type User struct {
+	Username      string
+	keychainUUID  uuid.UUID
+	passkey       []byte
+	fileAccessKey []byte
+	mac           []byte
+	keychain      RSAKeys
+}
+
+type SignedData struct {
+	Data      []byte
+	Signature []byte
+}
+
+type KeyStoreType int8
+
+const (
+	KeyTypeEnc KeyStoreType = 0
+	KeyTypeVer KeyStoreType = 1
+)
+
+func _DeriveKeyInfoFromUserdata(username string, password string) (uuid.UUID, []byte, error) {
+	var err error
+
+	var passkey []byte = userlib.Argon2Key([]byte(password), []byte(username), 16)
+
+	var hashSeed []byte = userlib.SymEnc(passkey, []byte(username), []byte(password))
+
+	var keychainUUID uuid.UUID
+
+	keychainUUID, err = uuid.FromBytes(userlib.Hash(hashSeed)[:16])
+	if err != nil {
+		return uuid.Nil, nil, err
+	}
+
+	return keychainUUID, passkey, nil
+}
+
+func _GetUserKeyStoreEntry(username string, keyType KeyStoreType) (keyLoc string, err error) {
+	var keyTypeStr string
+
+	if keyType == KeyTypeEnc {
+		keyTypeStr = "Enc"
+	} else if keyType == KeyTypeVer {
+		keyTypeStr = "Ver"
+	}
+
+	var typeHash string = string(userlib.Hash([]byte(keyTypeStr)))
+	var usernameHash string = string(userlib.Hash([]byte(username)))
+
+	return string(userlib.Hash([]byte(typeHash + usernameHash))[:16]), nil
+}
+
+func _DatastoreSetWithSignature(key uuid.UUID, value []byte, macKey []byte) (err error) {
+	var payload SignedData
+	payload.Data = value
+	payload.Signature, err = userlib.HMACEval(macKey, value)
+	if err != nil {
+		return err
+	}
+
+	var payloadData []byte
+	payloadData, err = json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+
+	userlib.DatastoreSet(key, payloadData)
+
+	return nil
+}
+
+func _DatastoreGetWithSignature(key uuid.UUID, macKey []byte) (value []byte, ok bool, err error) {
+	var payloadData []byte
+	payloadData, ok = userlib.DatastoreGet(key)
+	if !ok {
+		return nil, ok, nil
+	}
+
+	var payload SignedData
+	err = json.Unmarshal(payloadData, &payload)
+	if err != nil {
+		return nil, ok, err
+	}
+
+	var mySignature []byte
+	mySignature, err = userlib.HMACEval(macKey, payload.Data)
+	if err != nil {
+		return nil, ok, err
+	}
+
+	if !userlib.HMACEqual(mySignature, payload.Signature) {
+		return nil, ok, errors.New(strings.ToTitle("HMAC Signature mismatch!"))
+	}
+
+	return payload.Data, ok, nil
+}
+
+func _DatastoreSetSecure(key uuid.UUID, value []byte, macKey []byte, encKey []byte) (err error) {
+	return _DatastoreSetWithSignature(
+		key,
+		userlib.SymEnc(
+			encKey,
+			userlib.RandomBytes(16),
+			value),
+		macKey)
+}
+
+func _DatastoreGetSecure(key uuid.UUID, macKey []byte, encKey []byte) (value []byte, ok bool, err error) {
+	var ciphertext []byte
+	ciphertext, ok, err = _DatastoreGetWithSignature(key, macKey)
+	if err != nil || !ok {
+		return nil, ok, err
+	}
+
+	return userlib.SymDec(encKey, ciphertext), ok, nil
+}
 
 func InitUser(username string, password string) (userdataptr *User, err error) {
 	var userdata User
-	userdata.Username = username
+
+	userdata.keychainUUID, userdata.passkey, err = _DeriveKeyInfoFromUserdata(username, password)
+	if err != nil {
+		return nil, err
+	}
+
+	userdata.keychain.FileAccessKey = userlib.RandomBytes(16)
+	userdata.keychain.FileAccessMAC = userlib.RandomBytes(16)
+
+	var pubEncKey userlib.PKEEncKey
+	var pubVerKey userlib.DSVerifyKey
+
+	pubEncKey, userdata.keychain.DecKey, err = userlib.PKEKeyGen()
+	if err != nil {
+		return nil, err
+	}
+
+	userdata.keychain.SigKey, pubVerKey, err = userlib.DSKeyGen()
+	if err != nil {
+		return nil, err
+	}
+
+	var pubEncKeyLoc string
+	var pubVerKeyLoc string
+
+	pubEncKeyLoc, err = _GetUserKeyStoreEntry(username, KeyTypeEnc)
+	if err != nil {
+		return nil, err
+	}
+
+	pubVerKeyLoc, err = _GetUserKeyStoreEntry(username, KeyTypeVer)
+	if err != nil {
+		return nil, err
+	}
+
+	err = userlib.KeystoreSet(pubEncKeyLoc, pubEncKey)
+	if err != nil {
+		return nil, err
+	}
+
+	err = userlib.KeystoreSet(pubVerKeyLoc, pubVerKey)
+	if err != nil {
+		return nil, err
+	}
+
+	var keychainData []byte
+	keychainData, err = json.Marshal(userdata.keychain)
+	if err != nil {
+		return nil, err
+	}
+
+	err = _DatastoreSetSecure(
+		userdata.keychainUUID,
+		keychainData,
+		userdata.keychain.FileAccessMAC,
+		userdata.keychain.FileAccessKey)
+
+	if err != nil {
+		return nil, err
+	}
+
 	return &userdata, nil
 }
 
 func GetUser(username string, password string) (userdataptr *User, err error) {
 	var userdata User
-	userdataptr = &userdata
-	return userdataptr, nil
+
+	userdata.keychainUUID, userdata.passkey, err = _DeriveKeyInfoFromUserdata(username, password)
+	if err != nil {
+		return nil, err
+	}
+
+	var pubEncKeyLoc string
+	var pubVerKeyLoc string
+
+	pubEncKeyLoc, err = _GetUserKeyStoreEntry(username, KeyTypeEnc)
+	if err != nil {
+		return nil, err
+	}
+
+	pubVerKeyLoc, err = _GetUserKeyStoreEntry(username, KeyTypeVer)
+	if err != nil {
+		return nil, err
+	}
+
+	err = _DatastoreSetSecure(
+		userdata.keychainUUID,
+		keychainData,
+		userdata.keychain.FileAccessMAC,
+		userdata.keychain.FileAccessKey)
+
+	return &userdata, nil
 }
 
 func (userdata *User) StoreFile(filename string, content []byte) (err error) {
