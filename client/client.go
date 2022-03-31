@@ -125,21 +125,39 @@ const (
 	KeyTypeVer KeyStoreType = 1
 )
 
-func _DeriveKeyInfoFromUserdata(username string, password string) (uuid.UUID, []byte, error) {
-	var err error
+func _DeriveKeyInfoFromUserdata(username string, password string) (userdataptr *User, err error) {
+	var userdata User
 
-	var passkey []byte = userlib.Argon2Key([]byte(password), []byte(username), 16)
+	var entropy []byte = userlib.Argon2Key([]byte(password), []byte(username), 16)
 
-	var hashSeed []byte = userlib.SymEnc(passkey, []byte(username), []byte(password))
-
-	var keychainUUID uuid.UUID
-
-	keychainUUID, err = uuid.FromBytes(userlib.Hash(hashSeed)[:16])
+	var hashSeed []byte = userlib.SymEnc(entropy, userlib.Hash([]byte(username))[:16], userlib.Hash([]byte(password)))
+	userdata.keychainUUID, err = uuid.FromBytes(userlib.Hash(hashSeed)[:16])
 	if err != nil {
-		return uuid.Nil, nil, err
+		return nil, err
 	}
 
-	return keychainUUID, passkey, nil
+	userdata.passkey, err = userlib.HashKDF(entropy, []byte("Key to encrypt Keychain"))
+	if err != nil {
+		return nil, err
+	}
+
+	userdata.passkey = userdata.passkey[:16]
+
+	userdata.fileAccessKey, err = userlib.HashKDF(entropy, []byte("Key to encrypt file access struct"))
+	if err != nil {
+		return nil, err
+	}
+
+	userdata.fileAccessKey = userdata.fileAccessKey[:16]
+
+	userdata.mac, err = userlib.HashKDF(entropy, []byte("User MAC"))
+	if err != nil {
+		return nil, err
+	}
+
+	userdata.mac = userdata.mac[:16]
+
+	return &userdata, nil
 }
 
 func _GetUserKeyStoreEntry(username string, keyType KeyStoreType) (keyLoc string, err error) {
@@ -223,15 +241,12 @@ func _DatastoreGetSecure(key uuid.UUID, macKey []byte, encKey []byte) (value []b
 }
 
 func InitUser(username string, password string) (userdataptr *User, err error) {
-	var userdata User
+	var userdata *User
 
-	userdata.keychainUUID, userdata.passkey, err = _DeriveKeyInfoFromUserdata(username, password)
+	userdata, err = _DeriveKeyInfoFromUserdata(username, password)
 	if err != nil {
 		return nil, err
 	}
-
-	userdata.keychain.FileAccessKey = userlib.RandomBytes(16)
-	userdata.keychain.FileAccessMAC = userlib.RandomBytes(16)
 
 	var pubEncKey userlib.PKEEncKey
 	var pubVerKey userlib.DSVerifyKey
@@ -278,44 +293,38 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	err = _DatastoreSetSecure(
 		userdata.keychainUUID,
 		keychainData,
-		userdata.keychain.FileAccessMAC,
-		userdata.keychain.FileAccessKey)
+		userdata.mac,
+		userdata.passkey)
 
 	if err != nil {
 		return nil, err
 	}
 
-	return &userdata, nil
+	return userdata, nil
 }
 
 func GetUser(username string, password string) (userdataptr *User, err error) {
-	var userdata User
+	var userdata *User
 
-	userdata.keychainUUID, userdata.passkey, err = _DeriveKeyInfoFromUserdata(username, password)
+	userdata, err = _DeriveKeyInfoFromUserdata(username, password)
 	if err != nil {
 		return nil, err
 	}
 
-	var pubEncKeyLoc string
-	var pubVerKeyLoc string
-
-	pubEncKeyLoc, err = _GetUserKeyStoreEntry(username, KeyTypeEnc)
-	if err != nil {
-		return nil, err
-	}
-
-	pubVerKeyLoc, err = _GetUserKeyStoreEntry(username, KeyTypeVer)
-	if err != nil {
-		return nil, err
-	}
-
-	err = _DatastoreSetSecure(
+	var keychainData []byte
+	var ok bool
+	keychainData, ok, err = _DatastoreGetSecure(
 		userdata.keychainUUID,
-		keychainData,
-		userdata.keychain.FileAccessMAC,
-		userdata.keychain.FileAccessKey)
+		userdata.mac,
+		userdata.passkey)
+	if err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, errors.New("KeyChain file not found")
+	}
 
-	return &userdata, nil
+	err = json.Unmarshal(keychainData, &userdata.keychain)
+	return userdata, err
 }
 
 func (userdata *User) StoreFile(filename string, content []byte) (err error) {
