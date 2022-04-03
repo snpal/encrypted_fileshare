@@ -114,6 +114,23 @@ type User struct {
 	keychain      RSAKeys
 }
 
+type FileInvite struct {
+	Access uuid.UUID
+	Key    []byte
+	VerKey []byte
+}
+
+type SharedUser struct {
+	Username string
+	Access   uuid.UUID
+	Key      []byte
+	VerKey   []byte
+}
+
+type FileShare struct {
+	Users []SharedUser
+}
+
 type FileAccess struct {
 	Metadata uuid.UUID
 	Share    uuid.UUID
@@ -131,12 +148,6 @@ type FileSector struct {
 	Size int
 	Data []byte
 	Next uuid.UUID
-}
-
-type FileInvite struct {
-	Access uuid.UUID
-	Key    []byte
-	VerKey []byte
 }
 
 type SignedData struct {
@@ -370,7 +381,10 @@ func (userdata *User) StoreFile(filename string, content []byte) (err error) {
 	var fileAccess FileAccess
 	fileAccess.Key = userlib.RandomBytes(16)
 	fileAccess.VerKey = userlib.RandomBytes(16)
-	fileAccess.Share = uuid.Nil
+	fileAccess.Share, err = uuid.FromBytes(userlib.RandomBytes(16))
+	if err != nil {
+		return err
+	}
 	fileAccess.Metadata, err = uuid.FromBytes(userlib.RandomBytes(16))
 	if err != nil {
 		return err
@@ -397,6 +411,8 @@ func (userdata *User) StoreFile(filename string, content []byte) (err error) {
 	lastSector.Next = uuid.Nil
 	lastSector.Size = 0
 
+	var sharedUsers FileShare
+
 	var storeBuff []byte
 	storeBuff, err = json.Marshal(fileAccess)
 	if err != nil {
@@ -405,6 +421,20 @@ func (userdata *User) StoreFile(filename string, content []byte) (err error) {
 
 	err = _DatastoreSetSecure(
 		storageKey,
+		storeBuff,
+		userdata.fileMAC,
+		userdata.fileAccessKey)
+	if err != nil {
+		return err
+	}
+
+	storeBuff, err = json.Marshal(sharedUsers)
+	if err != nil {
+		return err
+	}
+
+	err = _DatastoreSetSecure(
+		fileAccess.Share,
 		storeBuff,
 		userdata.fileMAC,
 		userdata.fileAccessKey)
@@ -606,7 +636,7 @@ func (userdata *User) LoadFile(filename string) (content []byte, err error) {
 		access.VerKey,
 		access.Key)
 	if err != nil {
-		return nil, err
+		return nil, errors.New("other error")
 	} else if !ok {
 		return nil, errors.New("file metadata missing")
 	}
@@ -681,6 +711,47 @@ func (userdata *User) CreateInvitation(filename string, recipientUsername string
 		if err != nil {
 			return uuid.Nil, err
 		}
+
+		var loadBuff []byte
+		var ok bool
+		loadBuff, ok, err = _DatastoreGetSecure(
+			access.Share,
+			userdata.fileMAC,
+			userdata.fileAccessKey)
+		if err != nil {
+			return uuid.Nil, err
+		} else if !ok {
+			return uuid.Nil, errors.New("share not found")
+		}
+
+		var sharedUsers FileShare
+		err = json.Unmarshal(loadBuff, &sharedUsers)
+		if err != nil {
+			return uuid.Nil, err
+		}
+
+		var sharedUser SharedUser
+		sharedUser.Access = invite.Access
+		sharedUser.Key = invite.Key
+		sharedUser.VerKey = invite.VerKey
+		sharedUser.Username = recipientUsername
+
+		sharedUsers.Users = append(sharedUsers.Users[:], sharedUser)
+
+		storeBuff, err = json.Marshal(sharedUsers)
+		if err != nil {
+			return uuid.Nil, err
+		}
+
+		err = _DatastoreSetSecure(
+			access.Share,
+			storeBuff,
+			userdata.fileMAC,
+			userdata.fileAccessKey)
+		if err != nil {
+			return uuid.Nil, err
+		}
+
 	} else {
 		invite.Key = share.Key
 		invite.VerKey = share.VerKey
@@ -748,6 +819,93 @@ func (userdata *User) AcceptInvitation(senderUsername string, invitationPtr uuid
 	return nil
 }
 
-func (userdata *User) RevokeAccess(filename string, recipientUsername string) error {
+func (userdata *User) RevokeAccess(filename string, recipientUsername string) (err error) {
+	var content []byte
+	content, err = userdata.LoadFile(filename)
+	if err != nil {
+		return err
+	}
+
+	var access *FileAccess
+	access, _, err = _GetAccess(userdata, filename)
+	if err != nil {
+		return err
+	}
+
+	var loadBuff []byte
+	var ok bool
+	loadBuff, ok, err = _DatastoreGetSecure(
+		access.Share,
+		userdata.fileMAC,
+		userdata.fileAccessKey)
+	if err != nil {
+		return err
+	} else if !ok {
+		return errors.New("share not found")
+	}
+
+	var sharedUsers FileShare
+	err = json.Unmarshal(loadBuff, &sharedUsers)
+	if err != nil {
+		return err
+	}
+
+	userlib.DatastoreSet(access.Metadata, []byte("Nice try nerds"))
+
+	userdata.StoreFile(filename, content)
+
+	access, _, err = _GetAccess(userdata, filename)
+	if err != nil {
+		return err
+	}
+
+	var shareAccess FileAccess
+	shareAccess.Key = access.Key
+	shareAccess.VerKey = access.VerKey
+	shareAccess.Share = uuid.Nil
+	shareAccess.Metadata = access.Metadata
+
+	var storeBuff []byte
+	storeBuff, err = json.Marshal(shareAccess)
+	if err != nil {
+		return err
+	}
+
+	var newSharedusers FileShare
+
+	var i = 0
+	for i < len(sharedUsers.Users) {
+
+		if sharedUsers.Users[i].Username != recipientUsername {
+
+			err = _DatastoreSetSecure(
+				sharedUsers.Users[i].Access,
+				storeBuff,
+				sharedUsers.Users[i].VerKey,
+				sharedUsers.Users[i].Key)
+			if err != nil {
+				return err
+			}
+
+			newSharedusers.Users = append(newSharedusers.Users[:], sharedUsers.Users[i])
+		}
+
+		i = i + 1
+	}
+
+	storeBuff, err = json.Marshal(newSharedusers)
+	if err != nil {
+		return err
+	}
+
+	err = _DatastoreSetSecure(
+		access.Share,
+		storeBuff,
+		userdata.fileMAC,
+		userdata.fileAccessKey)
+	if err != nil {
+		return err
+	}
+
 	return nil
 }

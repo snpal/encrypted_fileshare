@@ -50,7 +50,7 @@ var _ = Describe("Client Tests", func() {
 	var alice *client.User
 	var bob *client.User
 	var charles *client.User
-	// var doris *client.User
+	var doris *client.User
 	// var eve *client.User
 	// var frank *client.User
 	// var grace *client.User
@@ -68,7 +68,7 @@ var _ = Describe("Client Tests", func() {
 	aliceFile := "aliceFile.txt"
 	bobFile := "bobFile.txt"
 	charlesFile := "charlesFile.txt"
-	// dorisFile := "dorisFile.txt"
+	dorisFile := "dorisFile.txt"
 	// eveFile := "eveFile.txt"
 	// frankFile := "frankFile.txt"
 	// graceFile := "graceFile.txt"
@@ -186,6 +186,9 @@ var _ = Describe("Client Tests", func() {
 			charles, err = client.InitUser("charles", defaultPassword)
 			Expect(err).To(BeNil())
 
+			doris, err = client.InitUser("doris", defaultPassword)
+			Expect(err).To(BeNil())
+
 			userlib.DebugMsg("Alice storing file %s with content: %s", aliceFile, contentOne)
 			alice.StoreFile(aliceFile, []byte(contentOne))
 
@@ -195,6 +198,12 @@ var _ = Describe("Client Tests", func() {
 			Expect(err).To(BeNil())
 
 			err = bob.AcceptInvitation("alice", invite, bobFile)
+			Expect(err).To(BeNil())
+
+			invite, err = alice.CreateInvitation(aliceFile, "doris")
+			Expect(err).To(BeNil())
+
+			err = doris.AcceptInvitation("alice", invite, dorisFile)
 			Expect(err).To(BeNil())
 
 			userlib.DebugMsg("Bob creating invite for Charles for file %s, and Charlie accepting invite under name %s.", bobFile, charlesFile)
@@ -210,6 +219,11 @@ var _ = Describe("Client Tests", func() {
 
 			userlib.DebugMsg("Checking that Alice can still load the file.")
 			data, err := alice.LoadFile(aliceFile)
+			Expect(err).To(BeNil())
+			Expect(data).To(Equal([]byte(contentOne)))
+
+			userlib.DebugMsg("Checking that Doris can still load the file.")
+			data, err = doris.LoadFile(dorisFile)
 			Expect(err).To(BeNil())
 			Expect(data).To(Equal([]byte(contentOne)))
 
