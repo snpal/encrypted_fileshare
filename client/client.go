@@ -108,9 +108,35 @@ type User struct {
 	Username      string
 	keychainUUID  uuid.UUID
 	passkey       []byte
-	fileAccessKey []byte
 	mac           []byte
+	fileMAC       []byte
+	fileAccessKey []byte
 	keychain      RSAKeys
+}
+
+type FileAccess struct {
+	Metadata uuid.UUID
+	Share    uuid.UUID
+	Key      []byte
+	VerKey   []byte
+}
+
+type FileMetaData struct {
+	Size  int
+	First uuid.UUID
+	Last  uuid.UUID
+}
+
+type FileSector struct {
+	Size int
+	Data []byte
+	Next uuid.UUID
+}
+
+type FileInvite struct {
+	Access uuid.UUID
+	Key    []byte
+	VerKey []byte
 }
 
 type SignedData struct {
@@ -156,6 +182,13 @@ func _DeriveKeyInfoFromUserdata(username string, password string) (userdataptr *
 	}
 
 	userdata.mac = userdata.mac[:16]
+
+	userdata.fileMAC, err = userlib.HashKDF(entropy, []byte("User File MAC"))
+	if err != nil {
+		return nil, err
+	}
+
+	userdata.fileMAC = userdata.fileMAC[:16]
 
 	return &userdata, nil
 }
@@ -328,41 +361,390 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 }
 
 func (userdata *User) StoreFile(filename string, content []byte) (err error) {
-	storageKey, err := uuid.FromBytes(userlib.Hash([]byte(filename + userdata.Username))[:16])
+	var hashSeed = string(userlib.Hash([]byte(filename))) + string(userlib.Hash([]byte(userdata.Username)))
+	storageKey, err := uuid.FromBytes(userlib.Hash([]byte(hashSeed))[:16])
 	if err != nil {
 		return err
 	}
-	contentBytes, err := json.Marshal(content)
+
+	var fileAccess FileAccess
+	fileAccess.Key = userlib.RandomBytes(16)
+	fileAccess.VerKey = userlib.RandomBytes(16)
+	fileAccess.Share = uuid.Nil
+	fileAccess.Metadata, err = uuid.FromBytes(userlib.RandomBytes(16))
 	if err != nil {
 		return err
 	}
-	userlib.DatastoreSet(storageKey, contentBytes)
+
+	var metadata FileMetaData
+	metadata.First, err = uuid.FromBytes(userlib.RandomBytes(16))
+	if err != nil {
+		return err
+	}
+	metadata.Last, err = uuid.FromBytes(userlib.RandomBytes(16))
+	if err != nil {
+		return err
+	}
+	metadata.Size = len(content)
+
+	var sector FileSector
+	sector.Data = content
+	sector.Next = metadata.Last
+	sector.Size = len(content)
+
+	var lastSector FileSector
+	lastSector.Data = nil
+	lastSector.Next = uuid.Nil
+	lastSector.Size = 0
+
+	var storeBuff []byte
+	storeBuff, err = json.Marshal(fileAccess)
+	if err != nil {
+		return err
+	}
+
+	err = _DatastoreSetSecure(
+		storageKey,
+		storeBuff,
+		userdata.fileMAC,
+		userdata.fileAccessKey)
+	if err != nil {
+		return err
+	}
+
+	storeBuff, err = json.Marshal(metadata)
+	if err != nil {
+		return err
+	}
+
+	err = _DatastoreSetSecure(
+		fileAccess.Metadata,
+		storeBuff,
+		fileAccess.VerKey,
+		fileAccess.Key)
+	if err != nil {
+		return err
+	}
+
+	storeBuff, err = json.Marshal(sector)
+	if err != nil {
+		return err
+	}
+
+	err = _DatastoreSetSecure(
+		metadata.First,
+		storeBuff,
+		fileAccess.VerKey,
+		fileAccess.Key)
+	if err != nil {
+		return err
+	}
+
+	storeBuff, err = json.Marshal(lastSector)
+	if err != nil {
+		return err
+	}
+
+	err = _DatastoreSetSecure(
+		metadata.Last,
+		storeBuff,
+		fileAccess.VerKey,
+		fileAccess.Key)
+	if err != nil {
+		return err
+	}
+
 	return
 }
 
-func (userdata *User) AppendToFile(filename string, content []byte) error {
+func _GetAccess(userdata *User, filename string) (access *FileAccess, share *FileAccess, err error) {
+	var hashSeed = string(userlib.Hash([]byte(filename))) + string(userlib.Hash([]byte(userdata.Username)))
+	storageKey, err := uuid.FromBytes(userlib.Hash([]byte(hashSeed))[:16])
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var loadBuff []byte
+	var ok bool
+	loadBuff, ok, err = _DatastoreGetSecure(
+		storageKey,
+		userdata.fileMAC,
+		userdata.fileAccessKey)
+	if err != nil {
+		return nil, nil, err
+	} else if !ok {
+		return nil, nil, errors.New("file not found")
+	}
+
+	var rootAccess FileAccess
+	err = json.Unmarshal(loadBuff, &rootAccess)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if rootAccess.Metadata != uuid.Nil {
+		return &rootAccess, nil, nil
+	}
+
+	loadBuff, ok, err = _DatastoreGetSecure(
+		rootAccess.Share,
+		rootAccess.VerKey,
+		rootAccess.Key)
+	if err != nil {
+		return nil, nil, err
+	} else if !ok {
+		return nil, nil, errors.New("file not found")
+	}
+
+	var shareAccess FileAccess
+	err = json.Unmarshal(loadBuff, &shareAccess)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return &shareAccess, &rootAccess, nil
+}
+
+func (userdata *User) AppendToFile(filename string, content []byte) (err error) {
+	var access *FileAccess
+	access, _, err = _GetAccess(userdata, filename)
+	if err != nil {
+		return err
+	}
+
+	var loadBuff []byte
+	var ok bool
+	loadBuff, ok, err = _DatastoreGetSecure(
+		access.Metadata,
+		access.VerKey,
+		access.Key)
+	if err != nil {
+		return err
+	} else if !ok {
+		return errors.New("file metadata missing")
+	}
+
+	var metadata FileMetaData
+	err = json.Unmarshal(loadBuff, &metadata)
+	if err != nil {
+		return err
+	}
+
+	var sector FileSector
+	sector.Data = content
+	sector.Size = len(content)
+	sector.Next, err = uuid.FromBytes(userlib.RandomBytes(16))
+	if err != nil {
+		return err
+	}
+
+	var storeBuff []byte
+	storeBuff, err = json.Marshal(sector)
+	if err != nil {
+		return err
+	}
+
+	err = _DatastoreSetSecure(
+		metadata.Last,
+		storeBuff,
+		access.VerKey,
+		access.Key)
+	if err != nil {
+		return err
+	}
+
+	metadata.Size = metadata.Size + len(content)
+	metadata.Last = sector.Next
+
+	storeBuff, err = json.Marshal(metadata)
+	if err != nil {
+		return err
+	}
+
+	err = _DatastoreSetSecure(
+		access.Metadata,
+		storeBuff,
+		access.VerKey,
+		access.Key)
+	if err != nil {
+		return err
+	}
+
+	var lastSector FileSector
+	lastSector.Data = nil
+	lastSector.Next = uuid.Nil
+	lastSector.Size = 0
+
+	storeBuff, err = json.Marshal(lastSector)
+	if err != nil {
+		return err
+	}
+
+	err = _DatastoreSetSecure(
+		metadata.Last,
+		storeBuff,
+		access.VerKey,
+		access.Key)
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
 func (userdata *User) LoadFile(filename string) (content []byte, err error) {
-	storageKey, err := uuid.FromBytes(userlib.Hash([]byte(filename + userdata.Username))[:16])
+	var access *FileAccess
+	access, _, err = _GetAccess(userdata, filename)
 	if err != nil {
 		return nil, err
 	}
-	dataJSON, ok := userlib.DatastoreGet(storageKey)
-	if !ok {
-		return nil, errors.New(strings.ToTitle("file not found"))
+
+	var loadBuff []byte
+	var ok bool
+	loadBuff, ok, err = _DatastoreGetSecure(
+		access.Metadata,
+		access.VerKey,
+		access.Key)
+	if err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, errors.New("file metadata missing")
 	}
-	err = json.Unmarshal(dataJSON, &content)
+
+	var metadata FileMetaData
+	err = json.Unmarshal(loadBuff, &metadata)
+	if err != nil {
+		return nil, err
+	}
+
+	var currentUUID uuid.UUID = metadata.First
+
+	for currentUUID != uuid.Nil {
+		loadBuff, ok, err = _DatastoreGetSecure(
+			currentUUID,
+			access.VerKey,
+			access.Key)
+		if err != nil {
+			return nil, err
+		} else if !ok {
+			return nil, errors.New("file sector missing")
+		}
+
+		var sector FileSector
+		err = json.Unmarshal(loadBuff, &sector)
+		if err != nil {
+			return nil, err
+		}
+
+		content = append(content[:], sector.Data...)
+
+		currentUUID = sector.Next
+	}
+
 	return content, err
 }
 
-func (userdata *User) CreateInvitation(filename string, recipientUsername string) (
-	invitationPtr uuid.UUID, err error) {
-	return
+func (userdata *User) CreateInvitation(filename string, recipientUsername string) (invitationPtr uuid.UUID, err error) {
+	var invite FileInvite
+	var access *FileAccess
+	var share *FileAccess
+	access, share, err = _GetAccess(userdata, filename)
+	if err != nil {
+		return uuid.Nil, err
+	}
+
+	if share == nil {
+		invite.Key = userlib.RandomBytes(16)
+		invite.VerKey = userlib.RandomBytes(16)
+		invite.Access, err = uuid.FromBytes(userlib.RandomBytes(16))
+		if err != nil {
+			return uuid.Nil, err
+		}
+
+		var shareAccess FileAccess
+		shareAccess.Key = access.Key
+		shareAccess.VerKey = access.VerKey
+		shareAccess.Share = uuid.Nil
+		shareAccess.Metadata = access.Metadata
+
+		var storeBuff []byte
+		storeBuff, err = json.Marshal(shareAccess)
+		if err != nil {
+			return uuid.Nil, err
+		}
+
+		err = _DatastoreSetSecure(
+			invite.Access,
+			storeBuff,
+			invite.VerKey,
+			invite.Key)
+		if err != nil {
+			return uuid.Nil, err
+		}
+	} else {
+		invite.Key = share.Key
+		invite.VerKey = share.VerKey
+		invite.Access = share.Share
+	}
+
+	invitationPtr, err = uuid.FromBytes(userlib.RandomBytes(16))
+	if err != nil {
+		return uuid.Nil, err
+	}
+
+	var storeBuff []byte
+	storeBuff, err = json.Marshal(invite)
+	if err != nil {
+		return uuid.Nil, err
+	}
+
+	// TODO: use RSA
+	userlib.DatastoreSet(invitationPtr, storeBuff)
+
+	return invitationPtr, nil
 }
 
-func (userdata *User) AcceptInvitation(senderUsername string, invitationPtr uuid.UUID, filename string) error {
+func (userdata *User) AcceptInvitation(senderUsername string, invitationPtr uuid.UUID, filename string) (err error) {
+	var hashSeed = string(userlib.Hash([]byte(filename))) + string(userlib.Hash([]byte(userdata.Username)))
+	storageKey, err := uuid.FromBytes(userlib.Hash([]byte(hashSeed))[:16])
+	if err != nil {
+		return err
+	}
+
+	var loadBuff []byte
+	var ok bool
+	loadBuff, ok = userlib.DatastoreGet(invitationPtr)
+	if !ok {
+		return errors.New("invite not found")
+	}
+
+	var invite FileInvite
+	err = json.Unmarshal(loadBuff, &invite)
+	if err != nil {
+		return err
+	}
+
+	var redirectAccess FileAccess
+	redirectAccess.Key = invite.Key
+	redirectAccess.VerKey = invite.VerKey
+	redirectAccess.Share = invite.Access
+	redirectAccess.Metadata = uuid.Nil
+
+	var storeBuff []byte
+	storeBuff, err = json.Marshal(redirectAccess)
+	if err != nil {
+		return err
+	}
+
+	err = _DatastoreSetSecure(
+		storageKey,
+		storeBuff,
+		userdata.fileMAC,
+		userdata.fileAccessKey)
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
