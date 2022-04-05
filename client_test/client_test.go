@@ -243,4 +243,46 @@ var _ = Describe("Client Tests", func() {
 		})
 
 	})
+
+	Describe("More Functoinality", func() {
+
+		Specify("More Functoinality: Testing that repeat usernames are not allowed.", func() {
+			userlib.DebugMsg("Initializing user Alice.")
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Initialize second user with the same username as Alice.")
+			doris, err = client.InitUser("alice", defaultPassword)
+			Expect(err).ToNot(BeNil())
+		})
+
+		Specify("More Functoinality: Testing that different users with same filenames function appropriately.", func() {
+			userlib.DebugMsg("Initializing users Alice and Bob.")
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+
+			bob, err = client.InitUser("bob", defaultPassword)
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Storing Alice's file data: %s", contentOne)
+			err = alice.StoreFile(aliceFile, []byte(contentOne))
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Storing Bob's file data in the same filename as Alice: %s", contentTwo)
+			err = bob.StoreFile(aliceFile, []byte(contentTwo))
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Loading Alice's file...")
+			data, err := alice.LoadFile(aliceFile)
+			Expect(err).To(BeNil())
+			Expect(data).To(Equal([]byte(contentOne)))
+
+			userlib.DebugMsg("Loading Bob's file...")
+			data, err = bob.LoadFile(aliceFile)
+			Expect(err).To(BeNil())
+			Expect(data).To(Equal([]byte(contentTwo)))
+
+		})
+
+	})
 })
