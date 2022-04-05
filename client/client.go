@@ -203,7 +203,7 @@ func _KeyStoreGet(username string, keyType KeyStoreType) (value userlib.PublicKe
 	return result, nil
 }
 
-func _DatastoreSetSecure(location uuid.UUID, value any, key []byte) (err error) {
+func _DatastoreSetSecure(location uuid.UUID, value interface{}, key []byte) (err error) {
 	storeBuff, err := json.Marshal(value)
 	if err != nil {
 		return err
@@ -226,7 +226,7 @@ func _DatastoreSetSecure(location uuid.UUID, value any, key []byte) (err error) 
 	return nil
 }
 
-func _DatastoreGetSecure(location uuid.UUID, value any, key []byte) (err error) {
+func _DatastoreGetSecure(location uuid.UUID, value interface{}, key []byte) (err error) {
 	payloadData, ok := userlib.DatastoreGet(location)
 	if !ok {
 		return errors.New("entry not found in datastore")
