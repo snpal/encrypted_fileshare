@@ -105,37 +105,29 @@ type RSAKeys struct {
 }
 
 type User struct {
-	Username      string
-	keychainUUID  uuid.UUID
-	passkey       []byte
-	mac           []byte
-	fileMAC       []byte
-	fileAccessKey []byte
-	keychain      RSAKeys
+	Username     string
+	keychainUUID uuid.UUID
+	entropy      []byte
+	keychainKey  []byte
+	keychain     RSAKeys
 }
 
 type FileInvite struct {
 	Access uuid.UUID
 	Key    []byte
-	VerKey []byte
 }
 
 type SharedUser struct {
 	Username string
 	Access   uuid.UUID
 	Key      []byte
-	VerKey   []byte
-}
-
-type FileShare struct {
-	Users []SharedUser
 }
 
 type FileAccess struct {
-	Metadata uuid.UUID
-	Share    uuid.UUID
-	Key      []byte
-	VerKey   []byte
+	Redirect    bool
+	Metadata    uuid.UUID
+	SharedUsers []SharedUser
+	Key         []byte
 }
 
 type FileMetaData struct {
@@ -165,46 +157,25 @@ const (
 func _DeriveKeyInfoFromUserdata(username string, password string) (userdataptr *User, err error) {
 	var userdata User
 
-	var entropy []byte = userlib.Argon2Key([]byte(password), []byte(username), 16)
+	userdata.entropy = userlib.Argon2Key([]byte(password), []byte(username), 16)
 
-	var hashSeed []byte = userlib.SymEnc(entropy, userlib.Hash([]byte(username))[:16], userlib.Hash([]byte(password)))
+	var hashSeed []byte = userlib.SymEnc(userdata.entropy, userlib.Hash([]byte(username))[:16], userlib.Hash([]byte(password)))
 	userdata.keychainUUID, err = uuid.FromBytes(userlib.Hash(hashSeed)[:16])
 	if err != nil {
 		return nil, err
 	}
 
-	userdata.passkey, err = userlib.HashKDF(entropy, []byte("Key to encrypt Keychain"))
+	userdata.keychainKey, err = userlib.HashKDF(userdata.entropy, []byte("Key to encrypt and sign Keychain"))
 	if err != nil {
 		return nil, err
 	}
 
-	userdata.passkey = userdata.passkey[:16]
-
-	userdata.fileAccessKey, err = userlib.HashKDF(entropy, []byte("Key to encrypt file access struct"))
-	if err != nil {
-		return nil, err
-	}
-
-	userdata.fileAccessKey = userdata.fileAccessKey[:16]
-
-	userdata.mac, err = userlib.HashKDF(entropy, []byte("User MAC"))
-	if err != nil {
-		return nil, err
-	}
-
-	userdata.mac = userdata.mac[:16]
-
-	userdata.fileMAC, err = userlib.HashKDF(entropy, []byte("User File MAC"))
-	if err != nil {
-		return nil, err
-	}
-
-	userdata.fileMAC = userdata.fileMAC[:16]
+	userdata.keychainKey = userdata.keychainKey[:32]
 
 	return &userdata, nil
 }
 
-func _KeyStoreSet(username string, keyType KeyStoreType, value userlib.PublicKeyType) (err error) {
+func __GetKeyForKeyStore(username string, keyType KeyStoreType) (key string) {
 	var keyTypeStr string
 
 	if keyType == KeyTypeEnc {
@@ -216,20 +187,22 @@ func _KeyStoreSet(username string, keyType KeyStoreType, value userlib.PublicKey
 	var typeHash string = string(userlib.Hash([]byte(keyTypeStr)))
 	var usernameHash string = string(userlib.Hash([]byte(username)))
 
-	var keyUUID = string(userlib.Hash([]byte(typeHash + usernameHash))[:16])
-
-	return userlib.KeystoreSet(keyUUID, value)
+	return string(userlib.Hash([]byte(typeHash + usernameHash))[:16])
 }
 
-func _DatastoreSetSecure(key uuid.UUID, value any, macKey []byte, encKey []byte) (err error) {
+func _KeyStoreSet(username string, keyType KeyStoreType, value userlib.PublicKeyType) (err error) {
+	return userlib.KeystoreSet(__GetKeyForKeyStore(username, keyType), value)
+}
+
+func _DatastoreSetSecure(location uuid.UUID, value any, key []byte) (err error) {
 	storeBuff, err := json.Marshal(value)
 	if err != nil {
 		return err
 	}
 
 	var payload SignedData
-	payload.Data = userlib.SymEnc(encKey, userlib.RandomBytes(16), storeBuff)
-	payload.Signature, err = userlib.HMACEval(macKey, payload.Data)
+	payload.Data = userlib.SymEnc(key[0:16], userlib.RandomBytes(16), storeBuff)
+	payload.Signature, err = userlib.HMACEval(key[16:32], payload.Data)
 	if err != nil {
 		return err
 	}
@@ -239,13 +212,13 @@ func _DatastoreSetSecure(key uuid.UUID, value any, macKey []byte, encKey []byte)
 		return err
 	}
 
-	userlib.DatastoreSet(key, payloadData)
+	userlib.DatastoreSet(location, payloadData)
 
 	return nil
 }
 
-func _DatastoreGetSecure(key uuid.UUID, value any, macKey []byte, encKey []byte) (err error) {
-	payloadData, ok := userlib.DatastoreGet(key)
+func _DatastoreGetSecure(location uuid.UUID, value any, key []byte) (err error) {
+	payloadData, ok := userlib.DatastoreGet(location)
 	if !ok {
 		return errors.New("entry not found in datastore")
 	}
@@ -256,7 +229,7 @@ func _DatastoreGetSecure(key uuid.UUID, value any, macKey []byte, encKey []byte)
 		return err
 	}
 
-	mySignature, err := userlib.HMACEval(macKey, payload.Data)
+	mySignature, err := userlib.HMACEval(key[16:32], payload.Data)
 	if err != nil {
 		return err
 	}
@@ -265,7 +238,7 @@ func _DatastoreGetSecure(key uuid.UUID, value any, macKey []byte, encKey []byte)
 		return errors.New(strings.ToTitle("HMAC Signature mismatch!"))
 	}
 
-	return json.Unmarshal(userlib.SymDec(encKey, payload.Data), value)
+	return json.Unmarshal(userlib.SymDec(key[0:16], payload.Data), value)
 }
 
 func InitUser(username string, password string) (userdataptr *User, err error) {
@@ -297,7 +270,7 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 		return nil, err
 	}
 
-	return userdata, _DatastoreSetSecure(userdata.keychainUUID, userdata.keychain, userdata.mac, userdata.passkey)
+	return userdata, _DatastoreSetSecure(userdata.keychainUUID, userdata.keychain, userdata.keychainKey)
 }
 
 func GetUser(username string, password string) (userdataptr *User, err error) {
@@ -306,25 +279,34 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 		return nil, err
 	}
 
-	return userdata, _DatastoreGetSecure(userdata.keychainUUID, &userdata.keychain, userdata.mac, userdata.passkey)
+	return userdata, _DatastoreGetSecure(userdata.keychainUUID, &userdata.keychain, userdata.keychainKey)
 }
 
-func _GetFileUUID(filename string, username string) (fileUUID uuid.UUID, err error) {
-	var hashSeed = string(userlib.Hash([]byte(filename))) + string(userlib.Hash([]byte(username)))
-	return uuid.FromBytes(userlib.Hash([]byte(hashSeed))[:16])
+func _DeriveFileInfo(userdata *User, filename string) (fileUUID uuid.UUID, accessKey []byte, shareKey []byte, err error) {
+	var hashSeed = string(userlib.Hash([]byte(filename))) + string(userlib.Hash([]byte(userdata.Username)))
+	fileUUID, err = uuid.FromBytes(userlib.Hash([]byte(hashSeed))[:16])
+	if err != nil {
+		return uuid.Nil, nil, nil, err
+	}
+
+	resultKey, err := userlib.HashKDF(userdata.entropy, []byte("Key to encrypt and sign file with hash seed"+hashSeed))
+	if err != nil {
+		return uuid.Nil, nil, nil, err
+	}
+
+	return fileUUID, resultKey[0:32], resultKey[32:64], nil
 }
 
 func (userdata *User) StoreFile(filename string, content []byte) (err error) {
-	storageKey, err := _GetFileUUID(filename, userdata.Username)
+	fileUUID, accessKey, _, err := _DeriveFileInfo(userdata, filename)
 	if err != nil {
 		return err
 	}
 
 	var access FileAccess
-	access.Key = userlib.RandomBytes(16)
-	access.VerKey = userlib.RandomBytes(16)
-	access.Share = uuid.New()
+	access.Key = userlib.RandomBytes(32)
 	access.Metadata = uuid.New()
+	access.Redirect = false
 
 	var metadata FileMetaData
 	metadata.First = uuid.New()
@@ -341,49 +323,42 @@ func (userdata *User) StoreFile(filename string, content []byte) (err error) {
 	lastSector.Next = uuid.Nil
 	lastSector.Size = 0
 
-	var sharedUsers FileShare
-
-	err = _DatastoreSetSecure(storageKey, access, userdata.fileMAC, userdata.fileAccessKey)
+	err = _DatastoreSetSecure(fileUUID, access, accessKey)
 	if err != nil {
 		return err
 	}
 
-	err = _DatastoreSetSecure(access.Share, sharedUsers, userdata.fileMAC, userdata.fileAccessKey)
+	err = _DatastoreSetSecure(access.Metadata, metadata, access.Key)
 	if err != nil {
 		return err
 	}
 
-	err = _DatastoreSetSecure(access.Metadata, metadata, access.VerKey, access.Key)
+	err = _DatastoreSetSecure(metadata.First, sector, access.Key)
 	if err != nil {
 		return err
 	}
 
-	err = _DatastoreSetSecure(metadata.First, sector, access.VerKey, access.Key)
-	if err != nil {
-		return err
-	}
-
-	return _DatastoreSetSecure(metadata.Last, lastSector, access.VerKey, access.Key)
+	return _DatastoreSetSecure(metadata.Last, lastSector, access.Key)
 }
 
 func _GetAccess(userdata *User, filename string) (access *FileAccess, share *FileAccess, err error) {
-	storageKey, err := _GetFileUUID(filename, userdata.Username)
+	fileUUID, accessKey, _, err := _DeriveFileInfo(userdata, filename)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	var rootAccess FileAccess
-	err = _DatastoreGetSecure(storageKey, &rootAccess, userdata.fileMAC, userdata.fileAccessKey)
+	err = _DatastoreGetSecure(fileUUID, &rootAccess, accessKey)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	if rootAccess.Metadata != uuid.Nil {
+	if !rootAccess.Redirect {
 		return &rootAccess, nil, nil
 	}
 
 	var shareAccess FileAccess
-	err = _DatastoreGetSecure(rootAccess.Share, &shareAccess, rootAccess.VerKey, rootAccess.Key)
+	err = _DatastoreGetSecure(rootAccess.Metadata, &shareAccess, rootAccess.Key)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -398,7 +373,7 @@ func (userdata *User) AppendToFile(filename string, content []byte) (err error) 
 	}
 
 	var metadata FileMetaData
-	err = _DatastoreGetSecure(access.Metadata, &metadata, access.VerKey, access.Key)
+	err = _DatastoreGetSecure(access.Metadata, &metadata, access.Key)
 	if err != nil {
 		return err
 	}
@@ -408,7 +383,7 @@ func (userdata *User) AppendToFile(filename string, content []byte) (err error) 
 	sector.Size = len(content)
 	sector.Next = uuid.New()
 
-	err = _DatastoreSetSecure(metadata.Last, sector, access.VerKey, access.Key)
+	err = _DatastoreSetSecure(metadata.Last, sector, access.Key)
 	if err != nil {
 		return err
 	}
@@ -416,7 +391,7 @@ func (userdata *User) AppendToFile(filename string, content []byte) (err error) 
 	metadata.Size = metadata.Size + len(content)
 	metadata.Last = sector.Next
 
-	err = _DatastoreSetSecure(access.Metadata, metadata, access.VerKey, access.Key)
+	err = _DatastoreSetSecure(access.Metadata, metadata, access.Key)
 	if err != nil {
 		return err
 	}
@@ -425,7 +400,7 @@ func (userdata *User) AppendToFile(filename string, content []byte) (err error) 
 	lastSector.Data = nil
 	lastSector.Next = uuid.Nil
 	lastSector.Size = 0
-	return _DatastoreSetSecure(metadata.Last, lastSector, access.VerKey, access.Key)
+	return _DatastoreSetSecure(metadata.Last, lastSector, access.Key)
 }
 
 func (userdata *User) LoadFile(filename string) (content []byte, err error) {
@@ -435,7 +410,7 @@ func (userdata *User) LoadFile(filename string) (content []byte, err error) {
 	}
 
 	var metadata FileMetaData
-	err = _DatastoreGetSecure(access.Metadata, &metadata, access.VerKey, access.Key)
+	err = _DatastoreGetSecure(access.Metadata, &metadata, access.Key)
 	if err != nil {
 		return nil, err
 	}
@@ -444,7 +419,7 @@ func (userdata *User) LoadFile(filename string) (content []byte, err error) {
 
 	for currentUUID != uuid.Nil {
 		var sector FileSector
-		err = _DatastoreGetSecure(currentUUID, &sector, access.VerKey, access.Key)
+		err = _DatastoreGetSecure(currentUUID, &sector, access.Key)
 		if err != nil {
 			return nil, err
 		}
@@ -465,23 +440,14 @@ func (userdata *User) CreateInvitation(filename string, recipientUsername string
 	}
 
 	if share == nil {
-		invite.Key = userlib.RandomBytes(16)
-		invite.VerKey = userlib.RandomBytes(16)
+		invite.Key = userlib.RandomBytes(32)
 		invite.Access = uuid.New()
 
 		var shareAccess FileAccess
 		shareAccess.Key = access.Key
-		shareAccess.VerKey = access.VerKey
-		shareAccess.Share = uuid.Nil
 		shareAccess.Metadata = access.Metadata
 
-		err = _DatastoreSetSecure(invite.Access, shareAccess, invite.VerKey, invite.Key)
-		if err != nil {
-			return uuid.Nil, err
-		}
-
-		var sharedUsers FileShare
-		err = _DatastoreGetSecure(access.Share, &sharedUsers, userdata.fileMAC, userdata.fileAccessKey)
+		err = _DatastoreSetSecure(invite.Access, shareAccess, invite.Key)
 		if err != nil {
 			return uuid.Nil, err
 		}
@@ -489,19 +455,22 @@ func (userdata *User) CreateInvitation(filename string, recipientUsername string
 		var sharedUser SharedUser
 		sharedUser.Access = invite.Access
 		sharedUser.Key = invite.Key
-		sharedUser.VerKey = invite.VerKey
 		sharedUser.Username = recipientUsername
 
-		sharedUsers.Users = append(sharedUsers.Users[:], sharedUser)
+		access.SharedUsers = append(access.SharedUsers[:], sharedUser)
 
-		err = _DatastoreSetSecure(access.Share, sharedUsers, userdata.fileMAC, userdata.fileAccessKey)
+		fileUUID, accessKey, _, err := _DeriveFileInfo(userdata, filename)
+		if err != nil {
+			return uuid.Nil, err
+		}
+
+		err = _DatastoreSetSecure(fileUUID, access, accessKey)
 		if err != nil {
 			return uuid.Nil, err
 		}
 	} else {
 		invite.Key = share.Key
-		invite.VerKey = share.VerKey
-		invite.Access = share.Share
+		invite.Access = share.Metadata
 	}
 
 	invitationPtr = uuid.New()
@@ -518,7 +487,7 @@ func (userdata *User) CreateInvitation(filename string, recipientUsername string
 }
 
 func (userdata *User) AcceptInvitation(senderUsername string, invitationPtr uuid.UUID, filename string) (err error) {
-	storageKey, err := _GetFileUUID(filename, userdata.Username)
+	fileUUID, accessKey, _, err := _DeriveFileInfo(userdata, filename)
 	if err != nil {
 		return err
 	}
@@ -536,10 +505,9 @@ func (userdata *User) AcceptInvitation(senderUsername string, invitationPtr uuid
 
 	var redirectAccess FileAccess
 	redirectAccess.Key = invite.Key
-	redirectAccess.VerKey = invite.VerKey
-	redirectAccess.Share = invite.Access
-	redirectAccess.Metadata = uuid.Nil
-	return _DatastoreSetSecure(storageKey, redirectAccess, userdata.fileMAC, userdata.fileAccessKey)
+	redirectAccess.Redirect = true
+	redirectAccess.Metadata = invite.Access
+	return _DatastoreSetSecure(fileUUID, redirectAccess, accessKey)
 }
 
 func (userdata *User) RevokeAccess(filename string, recipientUsername string) (err error) {
@@ -553,11 +521,7 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) (e
 		return err
 	}
 
-	var sharedUsers FileShare
-	err = _DatastoreGetSecure(access.Share, &sharedUsers, userdata.fileMAC, userdata.fileAccessKey)
-	if err != nil {
-		return err
-	}
+	var oldSharedusers = access.SharedUsers
 
 	userlib.DatastoreSet(access.Metadata, []byte("Nice try nerds"))
 
@@ -570,29 +534,29 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) (e
 
 	var shareAccess FileAccess
 	shareAccess.Key = access.Key
-	shareAccess.VerKey = access.VerKey
-	shareAccess.Share = uuid.Nil
+	shareAccess.Redirect = false
 	shareAccess.Metadata = access.Metadata
 
-	var newSharedusers FileShare
-
 	var i = 0
-	for i < len(sharedUsers.Users) {
-
-		if sharedUsers.Users[i].Username != recipientUsername {
-			err = _DatastoreSetSecure(sharedUsers.Users[i].Access, shareAccess,
-				sharedUsers.Users[i].VerKey, sharedUsers.Users[i].Key)
+	for i < len(oldSharedusers) {
+		if oldSharedusers[i].Username != recipientUsername {
+			err = _DatastoreSetSecure(oldSharedusers[i].Access, shareAccess, oldSharedusers[i].Key)
 			if err != nil {
 				return err
 			}
 
-			newSharedusers.Users = append(newSharedusers.Users[:], sharedUsers.Users[i])
+			access.SharedUsers = append(access.SharedUsers[:], oldSharedusers[i])
 		}
 
 		i = i + 1
 	}
 
-	err = _DatastoreSetSecure(access.Share, newSharedusers, userdata.fileMAC, userdata.fileAccessKey)
+	fileUUID, accessKey, _, err := _DeriveFileInfo(userdata, filename)
+	if err != nil {
+		return err
+	}
+
+	err = _DatastoreSetSecure(fileUUID, access, accessKey)
 	if err != nil {
 		return err
 	}
