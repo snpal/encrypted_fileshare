@@ -194,6 +194,15 @@ func _KeyStoreSet(username string, keyType KeyStoreType, value userlib.PublicKey
 	return userlib.KeystoreSet(__GetKeyForKeyStore(username, keyType), value)
 }
 
+func _KeyStoreGet(username string, keyType KeyStoreType) (value userlib.PublicKeyType, err error) {
+	result, ok := userlib.KeystoreGet(__GetKeyForKeyStore(username, keyType))
+	if !ok {
+		return userlib.PublicKeyType{}, errors.New("could not find key for user '" + username + "'")
+	}
+
+	return result, nil
+}
+
 func _DatastoreSetSecure(location uuid.UUID, value any, key []byte) (err error) {
 	storeBuff, err := json.Marshal(value)
 	if err != nil {
@@ -480,7 +489,28 @@ func (userdata *User) CreateInvitation(filename string, recipientUsername string
 		return uuid.Nil, err
 	}
 
-	// TODO: use RSA
+	pubEncKey, err := _KeyStoreGet(recipientUsername, KeyTypeEnc)
+	if err != nil {
+		return uuid.Nil, err
+	}
+
+	var payload SignedData
+
+	payload.Data, err = userlib.PKEEnc(pubEncKey, storeBuff)
+	if err != nil {
+		return uuid.Nil, err
+	}
+
+	payload.Signature, err = userlib.DSSign(userdata.keychain.SigKey, payload.Data)
+	if err != nil {
+		return uuid.Nil, err
+	}
+
+	storeBuff, err = json.Marshal(payload)
+	if err != nil {
+		return uuid.Nil, err
+	}
+
 	userlib.DatastoreSet(invitationPtr, storeBuff)
 
 	return invitationPtr, nil
@@ -495,6 +525,27 @@ func (userdata *User) AcceptInvitation(senderUsername string, invitationPtr uuid
 	loadBuff, ok := userlib.DatastoreGet(invitationPtr)
 	if !ok {
 		return errors.New("invite not found")
+	}
+
+	var payload SignedData
+	err = json.Unmarshal(loadBuff, &payload)
+	if err != nil {
+		return err
+	}
+
+	pubVerKey, err := _KeyStoreGet(senderUsername, KeyTypeVer)
+	if err != nil {
+		return err
+	}
+
+	err = userlib.DSVerify(pubVerKey, payload.Data, payload.Signature)
+	if err != nil {
+		return err
+	}
+
+	loadBuff, err = userlib.PKEDec(userdata.keychain.DecKey, payload.Data)
+	if err != nil {
+		return err
 	}
 
 	var invite FileInvite
