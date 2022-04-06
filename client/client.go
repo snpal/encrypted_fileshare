@@ -153,6 +153,7 @@ const (
 func _DeriveEntropyFromUserdata(username string, password string) (userdataptr *User, rsaUUID uuid.UUID, rsaKey []byte, err error) {
 	var userdata User
 
+	userdata.Username = username
 	userdata.entropy = userlib.Argon2Key([]byte(password), []byte(username), 16)
 
 	var hashSeed []byte = userlib.SymEnc(userdata.entropy, userlib.Hash([]byte(username))[:16], userlib.Hash([]byte(password)))
@@ -288,13 +289,15 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 }
 
 func _DeriveFileInfo(userdata *User, filename string) (fileUUID uuid.UUID, accessKey []byte, err error) {
-	var hashSeed = string(userlib.Hash([]byte(filename))) + string(userlib.Hash([]byte(userdata.Username)))
-	fileUUID, err = uuid.FromBytes(userlib.Hash([]byte(hashSeed))[:16])
+	var fileHash = userlib.Hash([]byte(filename))
+	var userHash = userlib.Hash([]byte(userdata.Username))
+	var hashSeed = append(fileHash, userHash...)
+	fileUUID, err = uuid.FromBytes(userlib.Hash(hashSeed)[:16])
 	if err != nil {
 		return uuid.Nil, nil, err
 	}
 
-	resultKey, err := userlib.HashKDF(userdata.entropy, []byte("Key to encrypt and sign file with hash seed"+hashSeed))
+	resultKey, err := userlib.HashKDF(userdata.entropy, []byte("Key to encrypt and sign file of "+userdata.Username+" with name "+filename))
 	if err != nil {
 		return uuid.Nil, nil, err
 	}
