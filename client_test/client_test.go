@@ -62,6 +62,9 @@ var _ = Describe("Client Tests", func() {
 	var aliceLaptop *client.User
 	var aliceDesktop *client.User
 
+	var bobPhone *client.User
+	var bobLaptop *client.User
+
 	var err error
 
 	// A bunch of filenames that may be useful.
@@ -256,6 +259,16 @@ var _ = Describe("Client Tests", func() {
 			Expect(err).ToNot(BeNil())
 		})
 
+		Specify("More Functionality: Testing that usernames are case-sensitive.", func() {
+			userlib.DebugMsg("Initializing user 'alice'.")
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Initializing user 'Alice'.")
+			alice, err = client.InitUser("Alice", defaultPassword)
+			Expect(err).To(BeNil())
+		})
+
 		Specify("More Functionality: Testing that two different users can have the same filename without issues.", func() {
 			userlib.DebugMsg("Initializing users Alice and Bob.")
 			alice, err = client.InitUser("alice", defaultPassword)
@@ -281,6 +294,124 @@ var _ = Describe("Client Tests", func() {
 			data, err = bob.LoadFile(aliceFile)
 			Expect(err).To(BeNil())
 			Expect(data).To(Equal([]byte(contentTwo)))
+		})
+
+		Specify("More Functionality: Testing multiple users with multiple instances.", func() {
+			userlib.DebugMsg("Initializing users Alice and Bob.")
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+
+			bob, err = client.InitUser("bob", defaultPassword)
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Getting new instances of Alice - alicePhone, aliceDesktop, aliceLaptop")
+			alicePhone, err = client.GetUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+
+			aliceDesktop, err = client.GetUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+
+			aliceLaptop, err = client.GetUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Getting new instances of bob - bobPhone, bobLaptop")
+			bobPhone, err = client.GetUser("bob", defaultPassword)
+			Expect(err).To(BeNil())
+
+			bobLaptop, err = client.GetUser("bob", defaultPassword)
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("aliceDesktop storing file %s with content: %s", aliceFile, contentOne)
+			err = aliceDesktop.StoreFile(aliceFile, []byte(contentOne))
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("aliceLaptop creating invite for Bob.")
+			invite, err := aliceLaptop.CreateInvitation(aliceFile, "bob")
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Bob accepting invite from Alice under filename %s.", bobFile)
+			err = bob.AcceptInvitation("alice", invite, bobFile)
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("bobLaptop appending to file %s, content: %s", bobFile, contentTwo)
+			err = bobLaptop.AppendToFile(bobFile, []byte(contentTwo))
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("alice appending to file %s, content: %s", aliceFile, contentThree)
+			err = alice.AppendToFile(aliceFile, []byte(contentThree))
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Checking that alicePhone sees expected file data.")
+			data, err := alicePhone.LoadFile(aliceFile)
+			Expect(err).To(BeNil())
+			Expect(data).To(Equal([]byte(contentOne + contentTwo + contentThree)))
+
+			userlib.DebugMsg("Checking that aliceLaptop sees expected file data.")
+			data, err = aliceLaptop.LoadFile(aliceFile)
+			Expect(err).To(BeNil())
+			Expect(data).To(Equal([]byte(contentOne + contentTwo + contentThree)))
+
+			userlib.DebugMsg("Checking that aliceDesktop sees expected file data.")
+			data, err = aliceDesktop.LoadFile(aliceFile)
+			Expect(err).To(BeNil())
+			Expect(data).To(Equal([]byte(contentOne + contentTwo + contentThree)))
+
+			userlib.DebugMsg("Checking that Bob sees expected file data.")
+			data, err = bob.LoadFile(bobFile)
+			Expect(err).To(BeNil())
+			Expect(data).To(Equal([]byte(contentOne + contentTwo + contentThree)))
+
+			userlib.DebugMsg("Checking that bobPhone sees expected file data.")
+			data, err = bobPhone.LoadFile(bobFile)
+			Expect(err).To(BeNil())
+			Expect(data).To(Equal([]byte(contentOne + contentTwo + contentThree)))
+
+			userlib.DebugMsg("Checking that bobLaptop sees expected file data.")
+			data, err = bobLaptop.LoadFile(bobFile)
+			Expect(err).To(BeNil())
+			Expect(data).To(Equal([]byte(contentOne + contentTwo + contentThree)))
+		})
+
+		Specify("More Functionality: Testing for persistent non-local state.", func() {
+			userlib.DebugMsg("Initializing user 'alice'.")
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("alice storing file %s with content: %s", aliceFile, contentOne)
+			err = alice.StoreFile(aliceFile, []byte(contentOne))
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Getting new instances of Alice - alicePhone.")
+			alicePhone, err = client.GetUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Checking that alicePhone sees expected file data.")
+			data, err := alicePhone.LoadFile(aliceFile)
+			Expect(err).To(BeNil())
+			Expect(data).To(Equal([]byte(contentOne)))
+
+		})
+
+	})
+
+	Describe("Edge Cases", func() {
+
+		Specify("Edge Cases: Testing that password length = 0 is supported.", func() {
+			userlib.DebugMsg("Initializing user Alice.")
+			alice, err = client.InitUser("alice", emptyString)
+			Expect(err).To(BeNil())
+		})
+
+		Specify("Edge Cases: Really long username.", func() {
+			userlib.DebugMsg("Initializing user with reeeeally long username.")
+			alice, err = client.InitUser("alicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealice", emptyString)
+			Expect(err).To(BeNil())
+		})
+
+		Specify("Edge Cases: Really long password.", func() {
+			userlib.DebugMsg("Initializing user with reeeeally long username.")
+			alice, err = client.InitUser("alice", "alicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealicealice")
+			Expect(err).To(BeNil())
 		})
 	})
 })
