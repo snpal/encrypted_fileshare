@@ -289,15 +289,15 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 }
 
 func _DeriveFileInfo(userdata *User, filename string) (fileUUID uuid.UUID, accessKey []byte, err error) {
-	var fileHash = userlib.Hash([]byte(filename))
-	var userHash = userlib.Hash([]byte(userdata.Username))
-	var hashSeed = append(fileHash, userHash...)
-	fileUUID, err = uuid.FromBytes(userlib.Hash(hashSeed)[:16])
+	resultKey, err := userlib.HashKDF(userdata.entropy, []byte("Key to encrypt and sign file of "+userdata.Username+" with name "+filename))
 	if err != nil {
 		return uuid.Nil, nil, err
 	}
 
-	resultKey, err := userlib.HashKDF(userdata.entropy, []byte("Key to encrypt and sign file of "+userdata.Username+" with name "+filename))
+	var fileHash = userlib.Hash([]byte(filename))
+	var userHash = userlib.Hash([]byte(userdata.Username))
+	var hashSeed = userlib.SymEnc(resultKey[32:48], userHash[:16], fileHash)
+	fileUUID, err = uuid.FromBytes(userlib.Hash(hashSeed)[:16])
 	if err != nil {
 		return uuid.Nil, nil, err
 	}
