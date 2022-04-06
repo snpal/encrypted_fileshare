@@ -244,9 +244,9 @@ var _ = Describe("Client Tests", func() {
 
 	})
 
-	Describe("More Functoinality", func() {
+	Describe("More Functionality", func() {
 
-		Specify("More Functoinality: Testing that repeat usernames are not allowed.", func() {
+		Specify("More Functionality: Testing that repeat usernames are not allowed.", func() {
 			userlib.DebugMsg("Initializing user Alice.")
 			alice, err = client.InitUser("alice", defaultPassword)
 			Expect(err).To(BeNil())
@@ -256,7 +256,7 @@ var _ = Describe("Client Tests", func() {
 			Expect(err).ToNot(BeNil())
 		})
 
-		Specify("More Functoinality: Testing that different users with same filenames function appropriately.", func() {
+		Specify("More Functionality: Testing that two different users can have the same filename without issues.", func() {
 			userlib.DebugMsg("Initializing users Alice and Bob.")
 			alice, err = client.InitUser("alice", defaultPassword)
 			Expect(err).To(BeNil())
@@ -264,25 +264,23 @@ var _ = Describe("Client Tests", func() {
 			bob, err = client.InitUser("bob", defaultPassword)
 			Expect(err).To(BeNil())
 
-			userlib.DebugMsg("Storing Alice's file data: %s", contentOne)
-			err = alice.StoreFile(aliceFile, []byte(contentOne))
-			Expect(err).To(BeNil())
-
-			userlib.DebugMsg("Storing Bob's file data in the same filename as Alice: %s", contentTwo)
+			userlib.DebugMsg("Storing bob file data: %s", contentTwo)
 			err = bob.StoreFile(aliceFile, []byte(contentTwo))
 			Expect(err).To(BeNil())
 
-			userlib.DebugMsg("Loading Alice's file...")
+			userlib.DebugMsg("Storing file alice data: %s", contentOne)
+			err = alice.StoreFile(aliceFile, []byte(contentOne))
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Loading alice file...")
 			data, err := alice.LoadFile(aliceFile)
 			Expect(err).To(BeNil())
 			Expect(data).To(Equal([]byte(contentOne)))
 
-			userlib.DebugMsg("Loading Bob's file...")
+			userlib.DebugMsg("Loading bob file...")
 			data, err = bob.LoadFile(aliceFile)
 			Expect(err).To(BeNil())
 			Expect(data).To(Equal([]byte(contentTwo)))
-
 		})
-
 	})
 })
