@@ -257,7 +257,7 @@ var _ = Describe("Client Tests", func() {
 			Expect(data).To(BeNil())
 		})
 
-		Specify("Basic Test: No repeat filenames per user.", func() {
+		Specify("Basic Test: Repeat filenames overwrite existing files (not sharing).", func() {
 			userlib.DebugMsg("Initializing user Alice.")
 			alice, err = client.InitUser("alice", defaultPassword)
 			Expect(err).To(BeNil())
@@ -268,7 +268,7 @@ var _ = Describe("Client Tests", func() {
 
 			userlib.DebugMsg("Alice attempting to store file %s with content: %s", aliceFile, contentTwo)
 			err = alice.StoreFile(aliceFile, []byte(contentTwo))
-			Expect(err).ToNot(BeNil())
+			Expect(err).To(BeNil())
 		})
 
 		Specify("Basic Test: No repeat filenames per user, sharing edition.", func() {
