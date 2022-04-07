@@ -408,16 +408,15 @@ var _ = Describe("Client Tests", func() {
 			invite, err := alice.CreateInvitation(aliceFile, "bob")
 			Expect(err).To(BeNil())
 
-			userlib.DebugMsg("Bob accepts invite from Alice under filename %s.", bobFile)
-			err = bob.AcceptInvitation("alice", invite, bobFile)
+			userlib.DebugMsg("Bob accepts invite from Alice under filename %s.", aliceFile)
+			err = bob.AcceptInvitation("alice", invite, aliceFile)
 			Expect(err).To(BeNil())
 
-			userlib.DebugMsg("Alice attempting to revoke Bob's access from a file she doesn't own")
-			err = alice.RevokeAccess(bobFile, "bob")
+			userlib.DebugMsg("Bob attempting to revoke Alice's access from a file he doesn't own")
+			err = bob.RevokeAccess(aliceFile, "alice")
 			Expect(err).ToNot(BeNil())
 
 		})
-
 	})
 
 	Describe("More Functionality", func() {
@@ -432,11 +431,13 @@ var _ = Describe("Client Tests", func() {
 			Expect(err).ToNot(BeNil())
 		})
 
+		/* This is undefine behavior (3.1.1.c)
 		Specify("More Functionality: Testing that usernames must not be empty strings.", func() {
 			userlib.DebugMsg("Initializing user with empty string as username.")
 			alice, err = client.InitUser(emptyString, defaultPassword)
 			Expect(err).ToNot(BeNil())
 		})
+		*/
 
 		Specify("More Functionality: Testing that usernames are case-sensitive.", func() {
 			userlib.DebugMsg("Initializing user 'alice'.")
@@ -591,6 +592,7 @@ var _ = Describe("Client Tests", func() {
 			Expect(err).To(BeNil())
 		})
 
+		/*  (This is undefine behavior 3.6.7)
 		Specify("Edge Cases: Testing that a (non-revoked) user cannot be invited to the same file twice.", func() {
 			userlib.DebugMsg("Initializing user Alice.")
 			alice, err = client.InitUser("alice", defaultPassword)
@@ -616,6 +618,7 @@ var _ = Describe("Client Tests", func() {
 			_, err = alice.CreateInvitation(aliceFile, "bob")
 			Expect(err).ToNot(BeNil())
 		})
+		*/
 
 		Specify("Edge Cases: Invitation revoked before accepted", func() {
 			userlib.DebugMsg("Initializing users Alice and Bob.")

@@ -305,6 +305,11 @@ func _DeriveFileInfo(userdata *User, filename string) (fileUUID uuid.UUID, acces
 	return fileUUID, resultKey[0:32], nil
 }
 
+func _Exists(location uuid.UUID) (ok bool) {
+	_, ok = userlib.DatastoreGet(location)
+	return ok
+}
+
 func (userdata *User) StoreFile(filename string, content []byte) (err error) {
 	fileUUID, accessKey, err := _DeriveFileInfo(userdata, filename)
 	if err != nil {
@@ -515,6 +520,10 @@ func (userdata *User) AcceptInvitation(senderUsername string, invitationPtr uuid
 		return err
 	}
 
+	if _Exists(fileUUID) {
+		return errors.New("accepting invitation with used filename")
+	}
+
 	loadBuff, ok := userlib.DatastoreGet(invitationPtr)
 	if !ok {
 		return errors.New("invite not found")
@@ -551,6 +560,19 @@ func (userdata *User) AcceptInvitation(senderUsername string, invitationPtr uuid
 	redirectAccess.Key = invite.Key
 	redirectAccess.Redirect = true
 	redirectAccess.Metadata = invite.Access
+
+	var shareAccess FileAccess
+	err = _DatastoreGet(invite.Access, &shareAccess, invite.Key)
+	if err != nil {
+		return err
+	}
+
+	var metadata FileMetaData
+	err = _DatastoreGet(shareAccess.Metadata, &metadata, shareAccess.Key)
+	if err != nil {
+		return err
+	}
+
 	return _DatastoreSet(fileUUID, redirectAccess, accessKey)
 }
 
@@ -560,9 +582,13 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) (e
 		return err
 	}
 
-	access, _, err := _GetAccess(userdata, filename)
+	access, rootAccess, err := _GetAccess(userdata, filename)
 	if err != nil {
 		return err
+	}
+
+	if rootAccess != nil {
+		return errors.New("attempt to revoke file despite not being file owner")
 	}
 
 	var oldSharedusers = access.SharedUsers
