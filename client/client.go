@@ -248,6 +248,10 @@ func _DatastoreGet(location uuid.UUID, value interface{}, key []byte) (err error
 }
 
 func InitUser(username string, password string) (userdataptr *User, err error) {
+	if len(username) == 0 {
+		return nil, errors.New("cannot have username of length 0")
+	}
+
 	userdata, rsaUUID, rsaKey, err := _DeriveEntropyFromUserdata(username, password)
 	if err != nil {
 		return nil, err
