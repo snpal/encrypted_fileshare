@@ -7,6 +7,7 @@ import (
 	// Some imports use an underscore to prevent the compiler from complaining
 	// about unused imports.
 	_ "encoding/hex"
+	"errors"
 	_ "errors"
 	_ "strconv"
 	_ "strings"
@@ -26,6 +27,33 @@ import (
 func TestSetupAndExecution(t *testing.T) {
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "Client Tests")
+}
+
+var measureBandwidth = func(probe func()) (bandwidth int) {
+	before := userlib.DatastoreGetBandwidth()
+	probe()
+	after := userlib.DatastoreGetBandwidth()
+	return after - before
+}
+
+var shareWithManyUsers = func(alice *client.User, num int, newname string, filename string) {
+	var i = 0
+	for i < num {
+		var userUID = string(userlib.RandomBytes(32))
+
+		bob, err := client.InitUser(newname+userUID, defaultPassword)
+		Expect(err).To(BeNil())
+
+		//userlib.DebugMsg("Alice creating invite for " + newname + userUID)
+		invite, err := alice.CreateInvitation(filename, newname+userUID)
+		Expect(err).To(BeNil())
+
+		//userlib.DebugMsg(newname+userUID+" accepts invite from Alice under filename %s.", bobFile)
+		err = bob.AcceptInvitation("alice", invite, "test.txt")
+		Expect(err).To(BeNil())
+
+		i = i + 1
+	}
 }
 
 // ================================================
@@ -713,6 +741,47 @@ var _ = Describe("Client Tests", func() {
 			userlib.DebugMsg("Frank apending to file %s with content: %s", frankFile, contentOne)
 			err = frank.AppendToFile(frankFile, []byte(contentOne))
 			Expect(err).ToNot(BeNil())
+		})
+	})
+
+	Describe("Code Efficiency", func() {
+		Specify("Code Efficiency: Testing that sharing files does not create duplicates", func() {
+			userlib.DebugMsg("Initializing user Alice.")
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+
+			var fileContents = userlib.RandomBytes(1)
+
+			userlib.DebugMsg("Alice storing file %s with small content", aliceFile, contentThree)
+			err = alice.StoreFile(aliceFile, fileContents)
+			Expect(err).To(BeNil())
+
+			var bandwidth1 = measureBandwidth(func() {
+				shareWithManyUsers(alice, 5, "bob", aliceFile)
+			})
+
+			fileContents = userlib.RandomBytes(1024 * 16)
+
+			userlib.DebugMsg("Alice storing file %s with large content", aliceFile, contentThree)
+			err = alice.StoreFile(bobFile, fileContents)
+			Expect(err).To(BeNil())
+
+			var bandwidth1M = measureBandwidth(func() {
+				shareWithManyUsers(alice, 5, "charles", bobFile)
+			})
+
+			println(bandwidth1)
+			println(bandwidth1M)
+
+			var diff = bandwidth1M - bandwidth1
+
+			if diff > 1024*16 {
+				err = errors.New("sharing files uses up too much extra space")
+			} else {
+				err = nil
+			}
+
+			Expect(err).To(BeNil())
 		})
 	})
 
