@@ -310,47 +310,6 @@ func _Exists(location uuid.UUID) (ok bool) {
 	return ok
 }
 
-func (userdata *User) StoreFile(filename string, content []byte) (err error) {
-	fileUUID, accessKey, err := _DeriveFileInfo(userdata, filename)
-	if err != nil {
-		return err
-	}
-
-	var access FileAccess
-	access.Key = userlib.RandomBytes(32)
-	access.Metadata = uuid.New()
-	access.Redirect = false
-
-	var metadata FileMetaData
-	metadata.First = uuid.New()
-	metadata.Last = uuid.New()
-
-	var sector FileSector
-	sector.Data = content
-	sector.Next = metadata.Last
-
-	var lastSector FileSector
-	lastSector.Data = nil
-	lastSector.Next = uuid.Nil
-
-	err = _DatastoreSet(fileUUID, access, accessKey)
-	if err != nil {
-		return err
-	}
-
-	err = _DatastoreSet(access.Metadata, metadata, access.Key)
-	if err != nil {
-		return err
-	}
-
-	err = _DatastoreSet(metadata.First, sector, access.Key)
-	if err != nil {
-		return err
-	}
-
-	return _DatastoreSet(metadata.Last, lastSector, access.Key)
-}
-
 func _GetAccess(userdata *User, filename string) (access *FileAccess, share *FileAccess, err error) {
 	fileUUID, accessKey, err := _DeriveFileInfo(userdata, filename)
 	if err != nil {
@@ -374,6 +333,64 @@ func _GetAccess(userdata *User, filename string) (access *FileAccess, share *Fil
 	}
 
 	return &shareAccess, &rootAccess, nil
+}
+
+func (userdata *User) StoreFile(filename string, content []byte) (err error) {
+	var access *FileAccess
+	var metadata FileMetaData
+
+	fileUUID, accessKey, err := _DeriveFileInfo(userdata, filename)
+	if err != nil {
+		return err
+	}
+
+	if _Exists(fileUUID) {
+		access, _, err = _GetAccess(userdata, filename)
+		if err != nil {
+			return err
+		}
+
+		err = _DatastoreGet(access.Metadata, &metadata, access.Key)
+		if err != nil {
+			return err
+		}
+
+	} else {
+		var accessStackMem FileAccess
+		access = &accessStackMem
+
+		access.Key = userlib.RandomBytes(32)
+		access.Metadata = uuid.New()
+		access.Redirect = false
+
+		err = _DatastoreSet(fileUUID, access, accessKey)
+		if err != nil {
+			return err
+		}
+
+		metadata.First = uuid.New()
+		metadata.Last = uuid.New()
+	}
+
+	var sector FileSector
+	sector.Data = content
+	sector.Next = metadata.Last
+
+	var lastSector FileSector
+	lastSector.Data = nil
+	lastSector.Next = uuid.Nil
+
+	err = _DatastoreSet(access.Metadata, metadata, access.Key)
+	if err != nil {
+		return err
+	}
+
+	err = _DatastoreSet(metadata.First, sector, access.Key)
+	if err != nil {
+		return err
+	}
+
+	return _DatastoreSet(metadata.Last, lastSector, access.Key)
 }
 
 func (userdata *User) AppendToFile(filename string, content []byte) (err error) {
@@ -593,9 +610,18 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) (e
 
 	var oldSharedusers = access.SharedUsers
 
-	userlib.DatastoreSet(access.Metadata, []byte("Nice try nerds"))
+	fileUUID, accessKey, err := _DeriveFileInfo(userdata, filename)
+	if err != nil {
+		return err
+	}
 
-	userdata.StoreFile(filename, content)
+	userlib.DatastoreSet(access.Metadata, []byte("Nice try nerds"))
+	userlib.DatastoreDelete(fileUUID)
+
+	err = userdata.StoreFile(filename, content)
+	if err != nil {
+		return err
+	}
 
 	access, _, err = _GetAccess(userdata, filename)
 	if err != nil {
@@ -619,11 +645,6 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) (e
 		}
 
 		i = i + 1
-	}
-
-	fileUUID, accessKey, err := _DeriveFileInfo(userdata, filename)
-	if err != nil {
-		return err
 	}
 
 	err = _DatastoreSet(fileUUID, access, accessKey)
