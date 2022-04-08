@@ -36,6 +36,38 @@ var measureBandwidth = func(probe func()) (bandwidth int) {
 	return after - before
 }
 
+// func getUUIDs() (UUIDs []userlib.UUID) {
+// 	// Returns an array of UUIDs currently stored in DataStore.
+// 	// As a debugging measure for tests, currently also prints out each UUID in a new line.
+
+// 			keys := make([]userlib.UUID, len(mymap))
+
+// 			i := 0
+// 			for k := range mymap {
+// 				keys[i] = k
+// 				i++
+// 				println(k.String())
+// 			}
+// 	return keys
+// }
+
+func getNewUUID(old map[userlib.UUID][]byte, new map[userlib.UUID][]byte) (UUID userlib.UUID) {
+	// Checks to find a UUID that exists in the new map but not in the old map.
+	var ans userlib.UUID
+	for k, _ := range new {
+		println("comparisons: key, is it in new, is it in old")
+		println(k.String())
+		_, ok := new[k]
+		println(ok)
+		_, ok = old[k]
+		println(ok)
+		if _, ok = old[k]; !ok {
+			ans = k
+		}
+	}
+	return ans
+}
+
 var shareWithManyUsers = func(alice *client.User, num int, newname string, filename string) {
 	var i = 0
 	for i < num {
@@ -865,33 +897,80 @@ var _ = Describe("Client Tests", func() {
 			Expect(err).ToNot(BeNil())
 			Expect(data).To(BeNil())
 		})
+
+		Specify("Edge Cases: Shared file overwritten by owner.", func() {
+			// https://piazza.com/class/ky9e8cq86872u?cid=653_f60
+			userlib.DebugMsg("Initializing users Alice and Bob.")
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+
+			bob, err = client.InitUser("bob", defaultPassword)
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Alice storing file %s with content: %s", aliceFile, contentOne)
+			alice.StoreFile(aliceFile, []byte(contentOne))
+
+			userlib.DebugMsg("Alice creating invite for Bob for file %s", aliceFile)
+
+			invite, err := alice.CreateInvitation(aliceFile, "bob")
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Bob accepting Alice's invitation as %s", bobFile)
+
+			err = bob.AcceptInvitation("alice", invite, bobFile)
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Alice storing file %s with content: %s", aliceFile, contentTwo)
+			alice.StoreFile(aliceFile, []byte(contentTwo))
+
+			userlib.DebugMsg("Checking that Alice can still load the file.")
+			data, err := alice.LoadFile(aliceFile)
+			Expect(err).To(BeNil())
+			Expect(data).To(Equal([]byte(contentTwo)))
+
+			userlib.DebugMsg("Checking that Bob can still load the file.")
+			data, err = bob.LoadFile(bobFile)
+			Expect(err).To(BeNil())
+			Expect(data).To(Equal([]byte(contentTwo)))
+		})
 	})
 
 	Describe("Attacks", func() {
 
-		Specify("Attacks: Attacker changes bytes of datastore at random.", func() {
+		FSpecify("Attacks: Attacker changes bytes of datastore to corrupt a file.", func() {
+
+			userlib.DatastoreClear()
+
+			var oldmap = userlib.DatastoreGetMap()
+
 			userlib.DebugMsg("Initializing user Alice.")
 			alice, err = client.InitUser("alice", defaultPassword)
 			Expect(err).To(BeNil())
+
+			var newmap = userlib.DatastoreGetMap()
+
+			var fileUUID = getNewUUID(oldmap, newmap)
+
+			oldmap = userlib.DatastoreGetMap()
 
 			userlib.DebugMsg("Storing file data: %s", contentOne)
 			err = alice.StoreFile(aliceFile, []byte(contentOne))
 			Expect(err).To(BeNil())
 
-			userlib.DebugMsg("Initializing user Bob.")
-			bob, err = client.InitUser("bob", defaultPassword)
-			Expect(err).To(BeNil())
+			newmap = userlib.DatastoreGetMap()
 
-			userlib.DebugMsg("Storing file data: %s", contentOne)
-			err = bob.StoreFile(bobFile, []byte(contentOne))
-			Expect(err).To(BeNil())
+			fileUUID = getNewUUID(oldmap, newmap)
 
-			println(userlib.DatastoreGetMap())
+			println(userlib.DatastoreGet(fileUUID))
+
+			userlib.DatastoreSet(fileUUID, userlib.RandomBytes(16))
+
+			println(userlib.DatastoreGet(fileUUID))
 
 			userlib.DebugMsg("Loading file...")
 			data, err := alice.LoadFile(aliceFile)
-			Expect(err).To(BeNil())
-			Expect(data).To(Equal([]byte(contentOne)))
+			Expect(err).ToNot(BeNil())
+			Expect(data).To(BeNil())
 		})
 	})
 })
