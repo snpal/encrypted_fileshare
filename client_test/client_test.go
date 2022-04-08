@@ -843,6 +843,34 @@ var _ = Describe("Client Tests", func() {
 
 			Expect(err).To(BeNil())
 		})
+
+		FSpecify("Code Efficiency: Testing that file storage does not increase the number of keys in keystore.", func() {
+			userlib.DebugMsg("Initializing user Alice.")
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+
+			var beforeStore = len(userlib.KeystoreGetMap())
+
+			userlib.DebugMsg("Alice storing file %s with content %s", aliceFile, contentThree)
+			err = alice.StoreFile(aliceFile, []byte(contentThree))
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Alice storing file %s with content %s", bobFile, contentThree)
+			err = alice.StoreFile(bobFile, []byte(contentThree))
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Alice storing file %s with content %s", charlesFile, contentThree)
+			err = alice.StoreFile(charlesFile, []byte(contentThree))
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Alice storing file %s with content %s", dorisFile, contentThree)
+			err = alice.StoreFile(dorisFile, []byte(contentThree))
+			Expect(err).To(BeNil())
+
+			var afterStore = len(userlib.KeystoreGetMap())
+
+			Expect(beforeStore == afterStore).To(BeTrue())
+		})
 	})
 
 	Describe("Edge Cases", func() {
