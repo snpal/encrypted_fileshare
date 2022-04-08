@@ -812,7 +812,7 @@ var _ = Describe("Client Tests", func() {
 
 			var fileContents = userlib.RandomBytes(1)
 
-			userlib.DebugMsg("Alice storing file %s with small content", aliceFile, contentThree)
+			userlib.DebugMsg("Alice storing file %s with small content %s", aliceFile, contentThree)
 			err = alice.StoreFile(aliceFile, fileContents)
 			Expect(err).To(BeNil())
 
@@ -822,7 +822,7 @@ var _ = Describe("Client Tests", func() {
 
 			fileContents = userlib.RandomBytes(1024 * 16)
 
-			userlib.DebugMsg("Alice storing file %s with large content", aliceFile, contentThree)
+			userlib.DebugMsg("Alice storing file %s with large content %s", aliceFile, contentThree)
 			err = alice.StoreFile(bobFile, fileContents)
 			Expect(err).To(BeNil())
 
