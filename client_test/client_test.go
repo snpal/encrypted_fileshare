@@ -967,18 +967,12 @@ var _ = Describe("Client Tests", func() {
 
 	Describe("Attacks", func() {
 
-		Specify("Attacks: Attacker corrupts a file.", func() {
-			var userUUIDs []userlib.UUID = getNewUUIDs(func() {
-				userlib.DebugMsg("Initializing user Alice.")
-				alice, err = client.InitUser("alice", defaultPassword)
-				Expect(err).To(BeNil())
-			})
-
-			println(len(userUUIDs))
-			for idx, uuid := range userUUIDs {
-				println(idx)
-				println(uuid.String())
-			}
+		Specify("Attacks: Attacker changes bytes of datastore to corrupt a file.", func() {
+			// var userUUIDs []userlib.UUID = getNewUUIDs(func() {
+			userlib.DebugMsg("Initializing user Alice.")
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+			// })
 
 			var fileUUIDs []userlib.UUID = getNewUUIDs(func() {
 				userlib.DebugMsg("Storing file data: %s", contentOne)
@@ -1027,6 +1021,44 @@ var _ = Describe("Client Tests", func() {
 
 			//println(userlib.DatastoreGet(fileUUID))
 
+		})
+
+		FSpecify("Attacks: Revoked user attempts to tamper with previously shared file.", func() {
+			userlib.DebugMsg("Initializing users Alice and Bob.")
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+
+			bob, err = client.InitUser("bob", defaultPassword)
+			Expect(err).To(BeNil())
+
+			var fileUUIDs []userlib.UUID = getNewUUIDs(func() {
+				userlib.DebugMsg("Storing file data: %s", contentOne)
+				err = alice.StoreFile(aliceFile, []byte(contentOne))
+				Expect(err).To(BeNil())
+			})
+
+			userlib.DebugMsg("Alice inviting Bob to access %s", aliceFile)
+			invite, err := alice.CreateInvitation(aliceFile, "bob")
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Bob accepting file as %s", bobFile)
+			err = bob.AcceptInvitation("alice", invite, bobFile)
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Alice revoking Bob's access from %s.", aliceFile)
+			err = alice.RevokeAccess(aliceFile, "bob")
+			Expect(err).To(BeNil())
+
+			err = bob.AppendToFile(bobFile, []byte(contentOne))
+			Expect(err).ToNot(BeNil())
+
+			userlib.DatastoreSet(fileUUIDs[0], userlib.RandomBytes(8))
+
+			// bob's tampering has no effect on alice's file (file should be at diff uuid now)
+			userlib.DebugMsg("Loading file...")
+			data, err := alice.LoadFile(aliceFile)
+			Expect(err).To(BeNil())
+			Expect(data).To(Equal([]byte(contentOne)))
 		})
 	})
 })
