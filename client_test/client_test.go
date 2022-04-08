@@ -830,8 +830,8 @@ var _ = Describe("Client Tests", func() {
 				shareWithManyUsers(alice, 5, "charles", bobFile)
 			})
 
-			println(bandwidth1)
-			println(bandwidth1M)
+			// println(bandwidth1)
+			// println(bandwidth1M)
 
 			var diff = bandwidth1M - bandwidth1
 
