@@ -844,7 +844,7 @@ var _ = Describe("Client Tests", func() {
 			Expect(err).To(BeNil())
 		})
 
-		FSpecify("Code Efficiency: Testing that file storage does not increase the number of keys in keystore.", func() {
+		Specify("Code Efficiency: Testing that file storage does not increase the number of keys in keystore.", func() {
 			userlib.DebugMsg("Initializing user Alice.")
 			alice, err = client.InitUser("alice", defaultPassword)
 			Expect(err).To(BeNil())
