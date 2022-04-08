@@ -967,63 +967,57 @@ var _ = Describe("Client Tests", func() {
 
 	Describe("Attacks", func() {
 
-		Specify("Attacks: Attacker changes bytes of datastore to corrupt a file.", func() {
-			// var userUUIDs []userlib.UUID = getNewUUIDs(func() {
-			userlib.DebugMsg("Initializing user Alice.")
-			alice, err = client.InitUser("alice", defaultPassword)
-			Expect(err).To(BeNil())
-			// })
+		// Specify("Attacks: Attacker changes bytes of datastore to corrupt a file.", func() {
+		// 	// var userUUIDs []userlib.UUID = getNewUUIDs(func() {
+		// 	userlib.DebugMsg("Initializing user Alice.")
+		// 	alice, err = client.InitUser("alice", defaultPassword)
+		// 	Expect(err).To(BeNil())
+		// 	// })
 
-			var fileUUIDs []userlib.UUID = getNewUUIDs(func() {
-				userlib.DebugMsg("Storing file data: %s", contentOne)
-				err = alice.StoreFile(aliceFile, []byte(contentOne))
-				Expect(err).To(BeNil())
-			})
+		// 	var fileUUIDs []userlib.UUID = getNewUUIDs(func() {
+		// 		userlib.DebugMsg("Storing file data: %s", contentOne)
+		// 		err = alice.StoreFile(aliceFile, []byte(contentOne))
+		// 		Expect(err).To(BeNil())
+		// 	})
 
-			println(len(fileUUIDs))
-			for idx, uuid := range fileUUIDs {
-				println(idx)
-				println(uuid.String())
-			}
+		// 	userlib.DatastoreSet(fileUUIDs[len(fileUUIDs)-1], userlib.RandomBytes(16)) // corrupt file
 
-			userlib.DatastoreSet(fileUUIDs[len(fileUUIDs)-1], userlib.RandomBytes(8)) // corrupt file
+		// 	userlib.DebugMsg("Loading file...")
+		// 	data, err := alice.LoadFile(aliceFile)
+		// 	Expect(err).ToNot(BeNil()) // Currently this statement fails because the datastore entries have not been messed with yet
+		// 	Expect(data).To(BeNil())
 
-			userlib.DebugMsg("Loading file...")
-			data, err := alice.LoadFile(aliceFile)
-			Expect(err).ToNot(BeNil()) // Currently this statement fails because the datastore entries have not been messed with yet
-			Expect(data).To(BeNil())
+		//var oldmap = userlib.DatastoreGetMap()
 
-			//var oldmap = userlib.DatastoreGetMap()
+		//println("Old Map")
+		//printKeys(oldmap)
 
-			//println("Old Map")
-			//printKeys(oldmap)
+		//var newmap = userlib.DatastoreGetMap()
 
-			//var newmap = userlib.DatastoreGetMap()
+		//println("New Map")
+		//printKeys(newmap)
 
-			//println("New Map")
-			//printKeys(newmap)
+		//var fileUUID = getNewUUID(oldmap, newmap)
 
-			//var fileUUID = getNewUUID(oldmap, newmap)
+		//	oldmap = userlib.DatastoreGetMap()
 
-			//	oldmap = userlib.DatastoreGetMap()
+		// userlib.DebugMsg("Storing file data: %s", contentOne)
+		// err = alice.StoreFile(aliceFile, []byte(contentOne))
+		// Expect(err).To(BeNil())
 
-			// userlib.DebugMsg("Storing file data: %s", contentOne)
-			// err = alice.StoreFile(aliceFile, []byte(contentOne))
-			// Expect(err).To(BeNil())
+		//	newmap = userlib.DatastoreGetMap()
 
-			//	newmap = userlib.DatastoreGetMap()
+		//fileUUID = getNewUUID(oldmap, newmap)
 
-			//fileUUID = getNewUUID(oldmap, newmap)
+		//println(userlib.DatastoreGet(fileUUID))
 
-			//println(userlib.DatastoreGet(fileUUID))
+		//userlib.DatastoreSet(fileUUID, userlib.RandomBytes(16))
 
-			//userlib.DatastoreSet(fileUUID, userlib.RandomBytes(16))
+		//println(userlib.DatastoreGet(fileUUID))
 
-			//println(userlib.DatastoreGet(fileUUID))
+		// })
 
-		})
-
-		FSpecify("Attacks: Revoked user attempts to tamper with previously shared file.", func() {
+		Specify("Attacks: Revoked user attempts to tamper with previously shared file.", func() {
 			userlib.DebugMsg("Initializing users Alice and Bob.")
 			alice, err = client.InitUser("alice", defaultPassword)
 			Expect(err).To(BeNil())
@@ -1052,13 +1046,90 @@ var _ = Describe("Client Tests", func() {
 			err = bob.AppendToFile(bobFile, []byte(contentOne))
 			Expect(err).ToNot(BeNil())
 
-			userlib.DatastoreSet(fileUUIDs[0], userlib.RandomBytes(8))
+			userlib.DatastoreSet(fileUUIDs[len(fileUUIDs)-1], userlib.RandomBytes(16)) // corrupt file
 
 			// bob's tampering has no effect on alice's file (file should be at diff uuid now)
 			userlib.DebugMsg("Loading file...")
 			data, err := alice.LoadFile(aliceFile)
 			Expect(err).To(BeNil())
 			Expect(data).To(Equal([]byte(contentOne)))
+		})
+
+		Specify("Attacks: Test GetUser error on malicious activity.", func() {
+			var userUUIDs []userlib.UUID = getNewUUIDs(func() {
+				userlib.DebugMsg("Initializing user Alice.")
+				alice, err = client.InitUser("alice", defaultPassword)
+				Expect(err).To(BeNil())
+			})
+
+			userlib.DatastoreSet(userUUIDs[0], userlib.RandomBytes(16))
+
+			alice, err = client.GetUser("alice", defaultPassword)
+			Expect(err).ToNot(BeNil())
+		})
+
+		Specify("Attacks: Test LoadFile error on malicious activity.", func() {
+			userlib.DebugMsg("Initializing user Alice.")
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+
+			var fileUUIDs []userlib.UUID = getNewUUIDs(func() {
+				userlib.DebugMsg("Storing file data: %s", contentOne)
+				err = alice.StoreFile(aliceFile, []byte(contentOne))
+				Expect(err).To(BeNil())
+			})
+
+			userlib.DatastoreSet(fileUUIDs[len(fileUUIDs)-1], userlib.RandomBytes(16)) // corrupt file
+
+			userlib.DebugMsg("Loading file...")
+			data, err := alice.LoadFile(aliceFile)
+			Expect(err).ToNot(BeNil())
+			Expect(data).To(BeNil())
+		})
+
+		Specify("Attacks: Test CreateInvitation error on malicious activity.", func() {
+			// this might be out of scope, i can't find a place that says specifically what
+			// counts as "malicious activity" for CreateInvitation
+			userlib.DebugMsg("Initializing user Alice.")
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+
+			var fileUUIDs []userlib.UUID = getNewUUIDs(func() {
+				userlib.DebugMsg("Storing file data: %s", contentOne)
+				err = alice.StoreFile(aliceFile, []byte(contentOne))
+				Expect(err).To(BeNil())
+			})
+
+			userlib.DatastoreSet(fileUUIDs[len(fileUUIDs)-1], userlib.RandomBytes(16)) // corrupt file
+
+			userlib.DebugMsg("Alice creating invite for Bob for file %s", aliceFile)
+			_, err := alice.CreateInvitation(aliceFile, "bob")
+			Expect(err).ToNot(BeNil())
+		})
+
+		Specify("Attacks: Test AcceptInvitation error on malicious activity.", func() {
+			userlib.DebugMsg("Initializing users Alice and Bob.")
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+
+			bob, err = client.InitUser("bob", defaultPassword)
+			Expect(err).To(BeNil())
+
+			var fileUUIDs []userlib.UUID = getNewUUIDs(func() {
+				userlib.DebugMsg("Storing file data: %s", contentOne)
+				err = alice.StoreFile(aliceFile, []byte(contentOne))
+				Expect(err).To(BeNil())
+			})
+
+			userlib.DebugMsg("Alice creating invite for Bob for file %s", aliceFile)
+			invite, err := alice.CreateInvitation(aliceFile, "bob")
+			Expect(err).To(BeNil())
+
+			userlib.DatastoreSet(fileUUIDs[len(fileUUIDs)-1], userlib.RandomBytes(16)) // corrupt file
+
+			userlib.DebugMsg("Bob attempting to accept Alice's invitation as file %s", bobFile)
+			err = bob.AcceptInvitation("alice", invite, bobFile)
+			Expect(err).ToNot(BeNil())
 		})
 	})
 })
