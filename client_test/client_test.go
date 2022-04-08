@@ -968,9 +968,6 @@ var _ = Describe("Client Tests", func() {
 	Describe("Attacks", func() {
 
 		FSpecify("Attacks: Attacker changes bytes of datastore to corrupt a file.", func() {
-
-			//userlib.DatastoreClear()
-
 			var userUUIDs []userlib.UUID = getNewUUIDs(func() {
 				userlib.DebugMsg("Initializing user Alice.")
 				alice, err = client.InitUser("alice", defaultPassword)
@@ -978,6 +975,10 @@ var _ = Describe("Client Tests", func() {
 			})
 
 			println(len(userUUIDs))
+			for idx, uuid := range userUUIDs {
+				println(idx)
+				println(uuid.String())
+			}
 
 			var fileUUIDs []userlib.UUID = getNewUUIDs(func() {
 				userlib.DebugMsg("Storing file data: %s", contentOne)
@@ -986,8 +987,12 @@ var _ = Describe("Client Tests", func() {
 			})
 
 			println(len(fileUUIDs))
+			for idx, uuid := range fileUUIDs {
+				println(idx)
+				println(uuid.String())
+			}
 
-			// TODO: Mess with contents of data at the UUIDs
+			userlib.DatastoreSet(fileUUIDs[len(fileUUIDs)-1], userlib.RandomBytes(8)) // corrupt file
 
 			userlib.DebugMsg("Loading file...")
 			data, err := alice.LoadFile(aliceFile)
