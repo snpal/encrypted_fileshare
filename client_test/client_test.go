@@ -967,7 +967,7 @@ var _ = Describe("Client Tests", func() {
 
 	Describe("Attacks", func() {
 
-		FSpecify("Attacks: Attacker changes bytes of datastore to corrupt a file.", func() {
+		Specify("Attacks: Attacker corrupts a file.", func() {
 			var userUUIDs []userlib.UUID = getNewUUIDs(func() {
 				userlib.DebugMsg("Initializing user Alice.")
 				alice, err = client.InitUser("alice", defaultPassword)
