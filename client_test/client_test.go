@@ -51,21 +51,51 @@ var measureBandwidth = func(probe func()) (bandwidth int) {
 // 	return keys
 // }
 
-func getNewUUID(old map[userlib.UUID][]byte, new map[userlib.UUID][]byte) (UUID userlib.UUID) {
-	// Checks to find a UUID that exists in the new map but not in the old map.
-	var ans userlib.UUID
-	for k, _ := range new {
-		println("comparisons: key, is it in new, is it in old")
-		println(k.String())
-		_, ok := new[k]
-		println(ok)
-		_, ok = old[k]
-		println(ok)
-		if _, ok = old[k]; !ok {
-			ans = k
+//func getNewUUID(old map[userlib.UUID][]byte, new map[userlib.UUID][]byte) (UUID userlib.UUID) {
+// Checks to find a UUID that exists in the new map but not in the old map.
+//	var ans userlib.UUID
+//	for k, _ := range new {
+//		println("comparisons: key, is it in new, is it in old")
+//		println(k.String())
+//		_, ok := new[k]
+//		println(ok)
+//		_, ok = old[k]
+//		println(ok)
+//		if _, ok = old[k]; !ok {
+//			ans = k
+//		}
+//	}
+//	return ans
+//}
+
+func getNewUUIDs(probe func()) (newUUIDs []userlib.UUID) {
+	var dsMap = userlib.DatastoreGetMap()
+
+	var oldKeys []userlib.UUID
+
+	for k := range dsMap {
+		oldKeys = append(oldKeys, k)
+		// println("Old: " + k.String())
+	}
+
+	probe()
+
+	for k := range dsMap {
+		var keyExists = false
+		for j := 0; j < len(oldKeys); j++ {
+			if oldKeys[j] == k {
+				// println("Found Old Key: " + k.String())
+				keyExists = true
+			}
+		}
+
+		if !keyExists {
+			newUUIDs = append(newUUIDs, k)
+			// println("New Key: " + k.String())
 		}
 	}
-	return ans
+
+	return newUUIDs
 }
 
 var shareWithManyUsers = func(alice *client.User, num int, newname string, filename string) {
@@ -939,38 +969,59 @@ var _ = Describe("Client Tests", func() {
 
 		FSpecify("Attacks: Attacker changes bytes of datastore to corrupt a file.", func() {
 
-			userlib.DatastoreClear()
+			//userlib.DatastoreClear()
 
-			var oldmap = userlib.DatastoreGetMap()
+			var userUUIDs []userlib.UUID = getNewUUIDs(func() {
+				userlib.DebugMsg("Initializing user Alice.")
+				alice, err = client.InitUser("alice", defaultPassword)
+				Expect(err).To(BeNil())
+			})
 
-			userlib.DebugMsg("Initializing user Alice.")
-			alice, err = client.InitUser("alice", defaultPassword)
-			Expect(err).To(BeNil())
+			println(len(userUUIDs))
 
-			var newmap = userlib.DatastoreGetMap()
+			var fileUUIDs []userlib.UUID = getNewUUIDs(func() {
+				userlib.DebugMsg("Storing file data: %s", contentOne)
+				err = alice.StoreFile(aliceFile, []byte(contentOne))
+				Expect(err).To(BeNil())
+			})
 
-			var fileUUID = getNewUUID(oldmap, newmap)
+			println(len(fileUUIDs))
 
-			oldmap = userlib.DatastoreGetMap()
-
-			userlib.DebugMsg("Storing file data: %s", contentOne)
-			err = alice.StoreFile(aliceFile, []byte(contentOne))
-			Expect(err).To(BeNil())
-
-			newmap = userlib.DatastoreGetMap()
-
-			fileUUID = getNewUUID(oldmap, newmap)
-
-			println(userlib.DatastoreGet(fileUUID))
-
-			userlib.DatastoreSet(fileUUID, userlib.RandomBytes(16))
-
-			println(userlib.DatastoreGet(fileUUID))
+			// TODO: Mess with contents of data at the UUIDs
 
 			userlib.DebugMsg("Loading file...")
 			data, err := alice.LoadFile(aliceFile)
-			Expect(err).ToNot(BeNil())
+			Expect(err).ToNot(BeNil()) // Currently this statement fails because the datastore entries have not been messed with yet
 			Expect(data).To(BeNil())
+
+			//var oldmap = userlib.DatastoreGetMap()
+
+			//println("Old Map")
+			//printKeys(oldmap)
+
+			//var newmap = userlib.DatastoreGetMap()
+
+			//println("New Map")
+			//printKeys(newmap)
+
+			//var fileUUID = getNewUUID(oldmap, newmap)
+
+			//	oldmap = userlib.DatastoreGetMap()
+
+			// userlib.DebugMsg("Storing file data: %s", contentOne)
+			// err = alice.StoreFile(aliceFile, []byte(contentOne))
+			// Expect(err).To(BeNil())
+
+			//	newmap = userlib.DatastoreGetMap()
+
+			//fileUUID = getNewUUID(oldmap, newmap)
+
+			//println(userlib.DatastoreGet(fileUUID))
+
+			//userlib.DatastoreSet(fileUUID, userlib.RandomBytes(16))
+
+			//println(userlib.DatastoreGet(fileUUID))
+
 		})
 	})
 })
