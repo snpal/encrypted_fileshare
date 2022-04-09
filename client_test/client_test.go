@@ -674,7 +674,7 @@ var _ = Describe("Client Tests", func() {
 			Expect(data).To(Equal([]byte(contentOne)))
 		})
 
-		Specify("More Functionality: Testing that shared users can overide file contents.", func() {
+		Specify("More Functionality: Testing that shared users can override file contents.", func() {
 			userlib.DebugMsg("Initializing users Alice and Bob.")
 			alice, err = client.InitUser("alice", defaultPassword)
 			Expect(err).To(BeNil())
@@ -1199,50 +1199,76 @@ var _ = Describe("Client Tests", func() {
 			err = bob.AcceptInvitation("alice", invite, bobFile)
 			Expect(err).ToNot(BeNil())
 		})
-	})
 
-	Specify("Attacks: Overwrite entire file.", func() {
-		userlib.DebugMsg("Initializing user Alice.")
-		alice, err = client.InitUser("alice", defaultPassword)
-		Expect(err).To(BeNil())
+		Specify("Attacks: Malicious user attempts to accept an invitation not extended to them.", func() {
+			userlib.DebugMsg("Initializing user Alice.")
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
 
-		var fileUUIDs []userlib.UUID = getNewUUIDs(func() {
+			bob, err = client.InitUser("bob", defaultPassword)
+			Expect(err).To(BeNil())
+
+			charles, err = client.InitUser("charles", defaultPassword)
+			Expect(err).To(BeNil())
+
 			userlib.DebugMsg("Storing file data: %s", contentOne)
-			err = alice.StoreFile(aliceFile, []byte(userlib.RandomBytes(4)))
+			err = alice.StoreFile(aliceFile, []byte(contentOne))
 			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Alice creating invite for Bob for file %s", aliceFile)
+			invite, err := alice.CreateInvitation(aliceFile, "bob")
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Charles attempting to accept Alice's invitation as file %s", charlesFile)
+			err = charles.AcceptInvitation("alice", invite, charlesFile)
+			Expect(err).ToNot(BeNil())
 		})
 
-		userlib.DatastoreSet(fileUUIDs[len(fileUUIDs)-1], userlib.RandomBytes(4)) // corrupt file
-
-		userlib.DebugMsg("Loading file...")
-		data, err := alice.LoadFile(aliceFile)
-		Expect(err).ToNot(BeNil())
-		Expect(data).To(BeNil())
-	})
-
-	Specify("Attacks: Is our file encrypted?", func() {
-		userlib.DebugMsg("Initializing user Alice.")
-		alice, err = client.InitUser("alice", defaultPassword)
-		Expect(err).To(BeNil())
-
-		var fileUUIDs []userlib.UUID = getNewUUIDs(func() {
-			userlib.DebugMsg("Storing file data: %s", secret)
-			err = alice.StoreFile(aliceFile, []byte(secret))
+		Specify("Attacks: Overwrite entire file.", func() {
+			userlib.DebugMsg("Initializing user Alice.")
+			alice, err = client.InitUser("alice", defaultPassword)
 			Expect(err).To(BeNil())
+
+			var fileUUIDs []userlib.UUID = getNewUUIDs(func() {
+				userlib.DebugMsg("Storing file data: %s", contentOne)
+				err = alice.StoreFile(aliceFile, []byte(userlib.RandomBytes(4)))
+				Expect(err).To(BeNil())
+			})
+
+			userlib.DatastoreSet(fileUUIDs[len(fileUUIDs)-1], userlib.RandomBytes(4)) // corrupt file
+
+			userlib.DebugMsg("Loading file...")
+			data, err := alice.LoadFile(aliceFile)
+			Expect(err).ToNot(BeNil())
+			Expect(data).To(BeNil())
 		})
 
-		compromised := false
-		for _, uuid := range fileUUIDs {
-			data, _ := userlib.DatastoreGet(uuid)
-			if isCompromised(data, []byte(secret)) {
-				compromised = true
+		Specify("Attacks: Is our file encrypted?", func() {
+			userlib.DebugMsg("Initializing user Alice.")
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+
+			var fileUUIDs []userlib.UUID = getNewUUIDs(func() {
+				userlib.DebugMsg("Storing file data: %s", secret)
+				err = alice.StoreFile(aliceFile, []byte(secret))
+				Expect(err).To(BeNil())
+			})
+
+			userlib.DebugMsg("Reading stored data from DataStore")
+
+			compromised := false
+			for _, uuid := range fileUUIDs {
+				data, _ := userlib.DatastoreGet(uuid)
+				if isCompromised(data, []byte(secret)) {
+					compromised = true
+				}
 			}
-		}
 
-		Expect(compromised).To(BeFalse())
+			Expect(compromised).To(BeFalse())
 
-		userlib.DebugMsg("Loading file...")
-		_, err := alice.LoadFile(aliceFile)
-		Expect(err).To(BeNil())
+			userlib.DebugMsg("Loading file...")
+			_, err := alice.LoadFile(aliceFile)
+			Expect(err).To(BeNil())
+		})
 	})
 })
