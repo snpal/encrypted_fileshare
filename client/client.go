@@ -138,11 +138,6 @@ type FileSector struct {
 	Next uuid.UUID
 }
 
-type SignedData struct {
-	Data      []byte
-	Signature []byte
-}
-
 type KeyStoreType int8
 
 const (
@@ -200,51 +195,67 @@ func _KeyStoreGet(username string, keyType KeyStoreType) (value userlib.PublicKe
 	return result, nil
 }
 
-func _DatastoreSet(location uuid.UUID, value interface{}, key []byte) (err error) {
-	storeBuff, err := json.Marshal(value)
+func _DatastoreSetDataSigPair(location uuid.UUID, content []byte, signature []byte) (err error) {
+	payload := append(content, signature...)
+
+	marshalledPayload, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}
 
-	var payload SignedData
-	payload.Data = userlib.SymEnc(key[0:16], userlib.RandomBytes(16), storeBuff)
-	payload.Signature, err = userlib.HMACEval(key[16:32], payload.Data)
-	if err != nil {
-		return err
-	}
-
-	payloadData, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-
-	userlib.DatastoreSet(location, payloadData)
+	userlib.DatastoreSet(location, marshalledPayload)
 
 	return nil
 }
 
-func _DatastoreGet(location uuid.UUID, value interface{}, key []byte) (err error) {
-	payloadData, ok := userlib.DatastoreGet(location)
+func _DatastoreSet(location uuid.UUID, value interface{}, key []byte) (err error) {
+	payload, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+
+	payload = userlib.SymEnc(key[0:16], userlib.RandomBytes(16), payload)
+	hmacSig, err := userlib.HMACEval(key[16:32], payload)
+	if err != nil {
+		return err
+	}
+
+	return _DatastoreSetDataSigPair(location, payload, hmacSig)
+}
+
+func _DatastoreGetDataSigPair(location uuid.UUID, sigSize int) (content []byte, signature []byte, err error) {
+	marshalledPayload, ok := userlib.DatastoreGet(location)
 	if !ok {
-		return errors.New("entry not found in datastore")
+		return nil, nil, errors.New("entry not found in datastore")
 	}
 
-	var payload SignedData
-	err = json.Unmarshal(payloadData, &payload)
+	var payload []byte
+	err = json.Unmarshal(marshalledPayload, &payload)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var contentLen = len(payload) - sigSize
+
+	return payload[:contentLen], payload[contentLen:], nil
+}
+
+func _DatastoreGet(location uuid.UUID, value interface{}, key []byte) (err error) {
+	payload, signature, err := _DatastoreGetDataSigPair(location, 64)
 	if err != nil {
 		return err
 	}
 
-	mySignature, err := userlib.HMACEval(key[16:32], payload.Data)
+	mySignature, err := userlib.HMACEval(key[16:32], payload)
 	if err != nil {
 		return err
 	}
 
-	if !userlib.HMACEqual(mySignature, payload.Signature) {
+	if !userlib.HMACEqual(mySignature, signature) {
 		return errors.New(strings.ToTitle("HMAC Signature mismatch!"))
 	}
 
-	return json.Unmarshal(userlib.SymDec(key[0:16], payload.Data), value)
+	return json.Unmarshal(userlib.SymDec(key[0:16], payload), value)
 }
 
 func InitUser(username string, password string) (userdataptr *User, err error) {
@@ -513,26 +524,17 @@ func (userdata *User) CreateInvitation(filename string, recipientUsername string
 		return uuid.Nil, err
 	}
 
-	var payload SignedData
-
-	payload.Data, err = userlib.PKEEnc(pubEncKey, storeBuff)
+	payload, err := userlib.PKEEnc(pubEncKey, storeBuff)
 	if err != nil {
 		return uuid.Nil, err
 	}
 
-	payload.Signature, err = userlib.DSSign(userdata.rsa.SigKey, payload.Data)
+	signature, err := userlib.DSSign(userdata.rsa.SigKey, payload)
 	if err != nil {
 		return uuid.Nil, err
 	}
 
-	storeBuff, err = json.Marshal(payload)
-	if err != nil {
-		return uuid.Nil, err
-	}
-
-	userlib.DatastoreSet(invitationPtr, storeBuff)
-
-	return invitationPtr, nil
+	return invitationPtr, _DatastoreSetDataSigPair(invitationPtr, payload, signature)
 }
 
 func (userdata *User) AcceptInvitation(senderUsername string, invitationPtr uuid.UUID, filename string) (err error) {
@@ -545,13 +547,7 @@ func (userdata *User) AcceptInvitation(senderUsername string, invitationPtr uuid
 		return errors.New("accepting invitation with used filename")
 	}
 
-	loadBuff, ok := userlib.DatastoreGet(invitationPtr)
-	if !ok {
-		return errors.New("invite not found")
-	}
-
-	var payload SignedData
-	err = json.Unmarshal(loadBuff, &payload)
+	payload, signature, err := _DatastoreGetDataSigPair(invitationPtr, 256)
 	if err != nil {
 		return err
 	}
@@ -561,12 +557,12 @@ func (userdata *User) AcceptInvitation(senderUsername string, invitationPtr uuid
 		return err
 	}
 
-	err = userlib.DSVerify(pubVerKey, payload.Data, payload.Signature)
+	err = userlib.DSVerify(pubVerKey, payload, signature)
 	if err != nil {
 		return err
 	}
 
-	loadBuff, err = userlib.PKEDec(userdata.rsa.DecKey, payload.Data)
+	loadBuff, err := userlib.PKEDec(userdata.rsa.DecKey, payload)
 	if err != nil {
 		return err
 	}
