@@ -38,6 +38,13 @@ var measureBandwidth = func(probe func()) (bandwidth int) {
 	return after - before
 }
 
+var measureKeyBandwidth = func(probe func()) (bandwidth int) {
+	before := len(userlib.KeystoreGetMap())
+	probe()
+	after := len(userlib.KeystoreGetMap())
+	return after - before
+}
+
 func isCompromised(collected []byte, stored []byte) (compromised bool) {
 	// even if collected contains more information than stored, collected containing stored compromises our security.
 	// stored is chosen to be small in our test case to allow for various implementations storing contents differently
@@ -936,6 +943,86 @@ var _ = Describe("Client Tests", func() {
 			var afterStore = len(userlib.KeystoreGetMap())
 
 			Expect(beforeStore == afterStore).To(BeTrue())
+		})
+
+		Specify("Code Efficiency: Testing that the number of keys in keystore is linearly proportional to the number of users", func() {
+			userlib.DebugMsg("Initializing user Alice.")
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+
+			var fileContents = userlib.RandomBytes(1)
+
+			userlib.DebugMsg("Alice storing file %s with small content", aliceFile)
+			err = alice.StoreFile(aliceFile, fileContents)
+			Expect(err).To(BeNil())
+
+			var bandwidth1 = measureKeyBandwidth(func() {
+				shareWithManyUsers(alice, 5, "bob", aliceFile)
+			})
+
+			var bandwidth2 = measureKeyBandwidth(func() {
+				shareWithManyUsers(alice, 45, "charles", aliceFile)
+			})
+
+			// println(bandwidth1)
+			// println(bandwidth1M)
+
+			var diff = bandwidth2 / bandwidth1
+
+			if diff > 10 {
+				err = errors.New("sharing files uses up too much extra space")
+			} else {
+				err = nil
+			}
+
+			Expect(err).To(BeNil())
+		})
+
+		Specify("Code Efficiency: Testing that appending to files is only proportional to the append size", func() {
+			userlib.DebugMsg("Initializing user Alice.")
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+
+			var fileContents = userlib.RandomBytes(16)
+
+			userlib.DebugMsg("Alice storing file %s with small content", aliceFile)
+			err = alice.StoreFile(aliceFile, fileContents)
+			Expect(err).To(BeNil())
+
+			bob, err := client.InitUser("bob", defaultPassword)
+			Expect(err).To(BeNil())
+
+			invite, err := alice.CreateInvitation(aliceFile, "bob")
+			Expect(err).To(BeNil())
+
+			err = bob.AcceptInvitation("alice", invite, bobFile)
+			Expect(err).To(BeNil())
+
+			var bandwidth1 = measureBandwidth(func() {
+				err = bob.AppendToFile(bobFile, []byte("Hey"))
+				Expect(err).To(BeNil())
+			})
+
+			fileContents = userlib.RandomBytes(1024 * 16)
+
+			userlib.DebugMsg("Alice storing file %s with large content", aliceFile)
+			err = alice.StoreFile(bobFile, fileContents)
+			Expect(err).To(BeNil())
+
+			var bandwidth2 = measureBandwidth(func() {
+				err = bob.AppendToFile(bobFile, []byte("Hey"))
+				Expect(err).To(BeNil())
+			})
+
+			var diff = bandwidth2 - bandwidth1
+
+			if diff > 1024*16 {
+				err = errors.New("sharing files uses up too much extra space")
+			} else {
+				err = nil
+			}
+
+			Expect(err).To(BeNil())
 		})
 	})
 
