@@ -36,6 +36,20 @@ var measureBandwidth = func(probe func()) (bandwidth int) {
 	return after - before
 }
 
+func isCompromised(collected []byte, stored []byte) (compromised bool) {
+	// even if collected contains more information than stored, collected containing stored compromises our security.
+	// stored is chosen to be small in our test case to allow for various implementations storing contents differently
+	if len(stored) > len(collected) {
+		return false
+	}
+	for i, x := range stored {
+		if x != collected[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // func getUUIDs() (UUIDs []userlib.UUID) {
 // 	// Returns an array of UUIDs currently stored in DataStore.
 // 	// As a debugging measure for tests, currently also prints out each UUID in a new line.
@@ -126,6 +140,7 @@ const emptyString = ""
 const contentOne = "Bitcoin is Nick's favorite "
 const contentTwo = "digital "
 const contentThree = "cryptocurrency!"
+const secret = "shh"
 
 // ================================================
 // Describe(...) blocks help you organize your tests
@@ -1203,5 +1218,31 @@ var _ = Describe("Client Tests", func() {
 		data, err := alice.LoadFile(aliceFile)
 		Expect(err).ToNot(BeNil())
 		Expect(data).To(BeNil())
+	})
+
+	Specify("Attacks: Is our file encrypted?", func() {
+		userlib.DebugMsg("Initializing user Alice.")
+		alice, err = client.InitUser("alice", defaultPassword)
+		Expect(err).To(BeNil())
+
+		var fileUUIDs []userlib.UUID = getNewUUIDs(func() {
+			userlib.DebugMsg("Storing file data: %s", secret)
+			err = alice.StoreFile(aliceFile, []byte(secret))
+			Expect(err).To(BeNil())
+		})
+
+		compromised := false
+		for _, uuid := range fileUUIDs {
+			data, _ := userlib.DatastoreGet(uuid)
+			if isCompromised(data, []byte(secret)) {
+				compromised = true
+			}
+		}
+
+		Expect(compromised).To(BeFalse())
+
+		userlib.DebugMsg("Loading file...")
+		_, err := alice.LoadFile(aliceFile)
+		Expect(err).To(BeNil())
 	})
 })
