@@ -813,6 +813,16 @@ var _ = Describe("Client Tests", func() {
 			Expect(err).To(BeNil())
 			Expect(data).To(Equal([]byte(contentThree + contentOne)))
 
+			userlib.DebugMsg("Checking that doris cannot see file data.")
+			data, err = doris.LoadFile(dorisFile)
+			Expect(err).ToNot(BeNil())
+			Expect(data).To(BeNil())
+
+			userlib.DebugMsg("Checking that bob cannot see alice's file data.")
+			data, err = bob.LoadFile(bobFile)
+			Expect(err).ToNot(BeNil())
+			Expect(data).To(BeNil())
+
 			userlib.DebugMsg("Frank apending to file %s with content: %s", frankFile, contentOne)
 			err = frank.AppendToFile(frankFile, []byte(contentOne))
 			Expect(err).ToNot(BeNil())
