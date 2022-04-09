@@ -14,7 +14,6 @@ import (
 	// hex.EncodeToString(...) is useful for converting []byte to string
 
 	// Useful for string manipulation
-	"strings"
 
 	// Useful for formatting strings (e.g. `fmt.Sprintf`).
 	"fmt"
@@ -162,8 +161,6 @@ func _DeriveEntropyFromUserdata(username string, password string) (userdataptr *
 		return nil, uuid.Nil, nil, err
 	}
 
-	rsaKey = rsaKey[:32]
-
 	return &userdata, rsaUUID, rsaKey, nil
 }
 
@@ -195,13 +192,24 @@ func _KeyStoreGet(username string, keyType KeyStoreType) (value userlib.PublicKe
 	return result, nil
 }
 
-func _DatastoreSetDataSigPair(location uuid.UUID, content []byte, signature []byte) (err error) {
-	payload := append(content, signature...)
+func _DatastoreSetRaw(location uuid.UUID, payload []byte, key []byte) (err error) {
+	var paddingSize = 1 + int(userlib.RandomBytes(1)[0])%97
+	var padding []byte = make([]byte, paddingSize)
+
+	for i := 0; i < paddingSize; i++ {
+		padding[i] = byte(paddingSize)
+	}
+
+	payload = append(padding, payload...)
+
+	payload = userlib.SymEnc(key, userlib.RandomBytes(16), payload)
 
 	marshalledPayload, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}
+
+	marshalledPayload = marshalledPayload[1 : len(marshalledPayload)-1]
 
 	userlib.DatastoreSet(location, marshalledPayload)
 
@@ -220,31 +228,40 @@ func _DatastoreSet(location uuid.UUID, value interface{}, key []byte) (err error
 		return err
 	}
 
-	return _DatastoreSetDataSigPair(location, payload, hmacSig)
+	payload = append(payload, hmacSig...)
+
+	return _DatastoreSetRaw(location, payload, key[32:48])
 }
 
-func _DatastoreGetDataSigPair(location uuid.UUID, sigSize int) (content []byte, signature []byte, err error) {
+func _DatastoreGetRaw(location uuid.UUID, key []byte) (payload []byte, err error) {
 	marshalledPayload, ok := userlib.DatastoreGet(location)
 	if !ok {
-		return nil, nil, errors.New("entry not found in datastore")
+		return nil, errors.New("entry not found in datastore")
 	}
 
-	var payload []byte
+	marshalledPayload = append([]byte("\""), marshalledPayload...)
+	marshalledPayload = append(marshalledPayload, []byte("\"")...)
+
 	err = json.Unmarshal(marshalledPayload, &payload)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
-	var contentLen = len(payload) - sigSize
+	payload = userlib.SymDec(key, payload)
 
-	return payload[:contentLen], payload[contentLen:], nil
+	var paddingSize = int(payload[0])
+
+	return payload[paddingSize:], nil
 }
 
 func _DatastoreGet(location uuid.UUID, value interface{}, key []byte) (err error) {
-	payload, signature, err := _DatastoreGetDataSigPair(location, 64)
+	payload, err := _DatastoreGetRaw(location, key[32:48])
 	if err != nil {
 		return err
 	}
+
+	signature := payload[len(payload)-64:]
+	payload = payload[:len(payload)-64]
 
 	mySignature, err := userlib.HMACEval(key[16:32], payload)
 	if err != nil {
@@ -252,7 +269,7 @@ func _DatastoreGet(location uuid.UUID, value interface{}, key []byte) (err error
 	}
 
 	if !userlib.HMACEqual(mySignature, signature) {
-		return errors.New(strings.ToTitle("HMAC Signature mismatch!"))
+		return errors.New("HMAC Signature mismatch!")
 	}
 
 	return json.Unmarshal(userlib.SymDec(key[0:16], payload), value)
@@ -311,13 +328,13 @@ func _DeriveFileInfo(userdata *User, filename string) (fileUUID uuid.UUID, acces
 
 	var fileHash = userlib.Hash([]byte(filename))
 	var userHash = userlib.Hash([]byte(userdata.Username))
-	var hashSeed = userlib.SymEnc(resultKey[32:48], userHash[:16], fileHash)
+	var hashSeed = userlib.SymEnc(resultKey[48:64], userHash[:16], fileHash)
 	fileUUID, err = uuid.FromBytes(userlib.Hash(hashSeed)[:16])
 	if err != nil {
 		return uuid.Nil, nil, err
 	}
 
-	return fileUUID, resultKey[0:32], nil
+	return fileUUID, resultKey, nil
 }
 
 func _Exists(location uuid.UUID) (ok bool) {
@@ -374,7 +391,7 @@ func (userdata *User) StoreFile(filename string, content []byte) (err error) {
 		var accessStackMem FileAccess
 		access = &accessStackMem
 
-		access.Key = userlib.RandomBytes(32)
+		access.Key = userlib.RandomBytes(64)
 		access.Metadata = uuid.New()
 		access.Redirect = false
 
@@ -479,7 +496,7 @@ func (userdata *User) CreateInvitation(filename string, recipientUsername string
 	}
 
 	if share == nil {
-		invite.Key = userlib.RandomBytes(32)
+		invite.Key = userlib.RandomBytes(48)
 		invite.Access = uuid.New()
 
 		var shareAccess FileAccess
@@ -534,7 +551,9 @@ func (userdata *User) CreateInvitation(filename string, recipientUsername string
 		return uuid.Nil, err
 	}
 
-	return invitationPtr, _DatastoreSetDataSigPair(invitationPtr, payload, signature)
+	payload = append(payload, signature...)
+
+	return invitationPtr, _DatastoreSetRaw(invitationPtr, payload, userlib.Hash([]byte(recipientUsername))[:16])
 }
 
 func (userdata *User) AcceptInvitation(senderUsername string, invitationPtr uuid.UUID, filename string) (err error) {
@@ -547,10 +566,13 @@ func (userdata *User) AcceptInvitation(senderUsername string, invitationPtr uuid
 		return errors.New("accepting invitation with used filename")
 	}
 
-	payload, signature, err := _DatastoreGetDataSigPair(invitationPtr, 256)
+	payload, err := _DatastoreGetRaw(invitationPtr, userlib.Hash([]byte(userdata.Username))[:16])
 	if err != nil {
 		return err
 	}
+
+	signature := payload[len(payload)-256:]
+	payload = payload[:len(payload)-256]
 
 	pubVerKey, err := _KeyStoreGet(senderUsername, KeyTypeVer)
 	if err != nil {

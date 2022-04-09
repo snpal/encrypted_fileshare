@@ -9,6 +9,7 @@ import (
 	_ "encoding/hex"
 	"errors"
 	_ "errors"
+	"strconv"
 	_ "strconv"
 	_ "strings"
 	"testing"
@@ -16,6 +17,7 @@ import (
 	// A "dot" import is used here so that the functions in the ginko and gomega
 	// modules can be used without an identifier. For example, Describe() and
 	// Expect() instead of ginko.Describe() and gomega.Expect().
+
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 
@@ -99,6 +101,56 @@ func corruptUUIDs(uuids []userlib.UUID) {
 			userlib.DatastoreSet(uuids[i], userlib.RandomBytes(16))
 		}
 	}
+}
+
+func testINDCPA(prelude func(), probe func()) (err error) {
+	var reps = 32
+
+	var samples [][]byte
+
+	for i := 0; i < reps; i++ {
+		userlib.DatastoreClear()
+		userlib.KeystoreClear()
+
+		prelude()
+
+		newUUIDs, altUUIDs := getDatastoreChanges(probe)
+
+		uuids := append(newUUIDs, altUUIDs...)
+
+		for _, _uuid := range uuids {
+			payload, ok := userlib.DatastoreGet(_uuid)
+			if ok {
+				samples = append(samples, payload)
+			}
+		}
+	}
+
+	var maxLen = 0
+
+	for _, v := range samples {
+		if len(v) > maxLen {
+			maxLen = len(v)
+		}
+	}
+
+	for j := 0; j < maxLen; j++ {
+		var charMap map[string]int = make(map[string]int)
+		for k := 0; k < len(samples); k++ {
+			if len(samples[k]) > j {
+				charMap[string(samples[k][j])] = charMap[string(samples[k][j])] + 1
+			}
+		}
+
+		for k, v := range charMap {
+			if v >= reps {
+				println(k + ": " + strconv.FormatInt(int64(v), 10))
+				return errors.New("scheme is not IND-CPA secure: same char every time at index " + strconv.FormatInt(int64(j), 10))
+			}
+		}
+	}
+
+	return nil
 }
 
 var shareWithManyUsers = func(alice *client.User, num int, newname string, filename string) {
@@ -1080,9 +1132,8 @@ var _ = Describe("Client Tests", func() {
 			corruptUUIDs(fileUUIDs) // corrupt file
 
 			userlib.DebugMsg("Loading file...")
-			data, err := alice.LoadFile(aliceFile)
+			_, err := alice.LoadFile(aliceFile)
 			Expect(err).ToNot(BeNil())
-			Expect(data).To(BeNil())
 		})
 
 		Specify("Attacks: Test CreateInvitation error on malicious activity.", func() {
@@ -1195,37 +1246,59 @@ var _ = Describe("Client Tests", func() {
 			corruptUUIDs(fileUUIDs) // corrupt file
 
 			userlib.DebugMsg("Loading file...")
-			data, err := alice.LoadFile(aliceFile)
+			_, err := alice.LoadFile(aliceFile)
 			Expect(err).ToNot(BeNil())
-			Expect(data).To(BeNil())
+		})
+
+		Specify("Attacks: Is our user struct encrypted?", func() {
+			Expect(testINDCPA(func() {}, func() {
+				userlib.DebugMsg("Initializing user Alice.")
+				_, err = client.InitUser("alice", defaultPassword)
+				Expect(err).To(BeNil())
+			})).To(BeNil())
 		})
 
 		Specify("Attacks: Is our file encrypted?", func() {
-			userlib.DebugMsg("Initializing user Alice.")
-			alice, err = client.InitUser("alice", defaultPassword)
-			Expect(err).To(BeNil())
+			var alice *client.User
 
-			fileUUIDs, _ := getDatastoreChanges(func() {
+			Expect(testINDCPA(func() {
+				userlib.DebugMsg("Initializing user Alice.")
+				alice, err = client.InitUser("alice", defaultPassword)
+				Expect(err).To(BeNil())
+			}, func() {
 				userlib.DebugMsg("Storing file data: %s", secret)
 				err = alice.StoreFile(aliceFile, []byte(secret))
 				Expect(err).To(BeNil())
-			})
+			})).To(BeNil())
 
-			userlib.DebugMsg("Reading stored data from DataStore")
+			/*
+				userlib.DebugMsg("Initializing user Alice.")
+				alice, err = client.InitUser("alice", defaultPassword)
+				Expect(err).To(BeNil())
 
-			compromised := false
-			for _, uuid := range fileUUIDs {
-				data, _ := userlib.DatastoreGet(uuid)
-				if isCompromised(data, []byte(secret)) {
-					compromised = true
+				fileUUIDs, _ := getDatastoreChanges(func() {
+					userlib.DebugMsg("Storing file data: %s", secret)
+					err = alice.StoreFile(aliceFile, []byte(secret))
+					Expect(err).To(BeNil())
+				})
+
+				userlib.DebugMsg("Reading stored data from DataStore")
+
+				compromised := false
+				for _, uuid := range fileUUIDs {
+					data, _ := userlib.DatastoreGet(uuid)
+					println(len(data))
+					if isCompromised(data, []byte(secret)) {
+						compromised = true
+					}
 				}
-			}
 
-			Expect(compromised).To(BeFalse())
+				Expect(compromised).To(BeFalse())
 
-			userlib.DebugMsg("Loading file...")
-			_, err := alice.LoadFile(aliceFile)
-			Expect(err).To(BeNil())
+				userlib.DebugMsg("Loading file...")
+				_, err := alice.LoadFile(aliceFile)
+				Expect(err).To(BeNil())
+			///*/
 		})
 	})
 })
