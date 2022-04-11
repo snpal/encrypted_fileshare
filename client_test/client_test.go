@@ -1143,13 +1143,11 @@ var _ = Describe("Client Tests", func() {
 			Expect(data).To(Equal([]byte(contentOne)))
 
 			userlib.DebugMsg("Checking that Bob cannot load the file.")
-			data, err = bob.LoadFile(bobFile)
+			_, err = bob.LoadFile(bobFile)
 			Expect(err).ToNot(BeNil())
-			Expect(data).To(BeNil())
 
-			invite, err = bob.CreateInvitation(bobFile, "charles")
+			_, err = bob.CreateInvitation(bobFile, "charles")
 			Expect(err).ToNot(BeNil())
-			Expect(invite).To(BeNil())
 		})
 
 		Specify("Edge Cases: Shared file overwritten by owner.", func() {

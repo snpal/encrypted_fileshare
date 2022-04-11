@@ -637,7 +637,7 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) (e
 		return err
 	}
 
-	userlib.DatastoreSet(access.Metadata, []byte("Nice try nerds"))
+	userlib.DatastoreDelete(access.Metadata)
 	userlib.DatastoreDelete(fileUUID)
 
 	err = userdata.StoreFile(filename, content)
@@ -664,6 +664,8 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) (e
 			}
 
 			access.SharedUsers = append(access.SharedUsers[:], oldSharedusers[i])
+		} else {
+			userlib.DatastoreDelete(oldSharedusers[i].Access)
 		}
 
 		i = i + 1
