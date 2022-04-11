@@ -1109,6 +1109,49 @@ var _ = Describe("Client Tests", func() {
 			Expect(data).To(BeNil())
 		})
 
+		Specify("Edge Cases: Revoked user tries to create an invitation", func() {
+			userlib.DebugMsg("Initializing users Alice, Bob, and Charles.")
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+
+			bob, err = client.InitUser("bob", defaultPassword)
+			Expect(err).To(BeNil())
+
+			charles, err = client.InitUser("charles", defaultPassword)
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Alice storing file %s with content: %s", aliceFile, contentOne)
+			alice.StoreFile(aliceFile, []byte(contentOne))
+
+			userlib.DebugMsg("Alice creating invite for Bob for file %s", aliceFile)
+
+			invite, err := alice.CreateInvitation(aliceFile, "bob")
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Bob accepts Alice's invitation for file %s", aliceFile)
+
+			err = bob.AcceptInvitation("alice", invite, bobFile)
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Alice revoking Bob's access from %s.", aliceFile)
+			err = alice.RevokeAccess(aliceFile, "bob")
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Checking that Alice can still load the file.")
+			data, err := alice.LoadFile(aliceFile)
+			Expect(err).To(BeNil())
+			Expect(data).To(Equal([]byte(contentOne)))
+
+			userlib.DebugMsg("Checking that Bob cannot load the file.")
+			data, err = bob.LoadFile(bobFile)
+			Expect(err).ToNot(BeNil())
+			Expect(data).To(BeNil())
+
+			invite, err = bob.CreateInvitation(bobFile, "charles")
+			Expect(err).ToNot(BeNil())
+			Expect(invite).To(BeNil())
+		})
+
 		Specify("Edge Cases: Shared file overwritten by owner.", func() {
 			// https://piazza.com/class/ky9e8cq86872u?cid=653_f60
 			userlib.DebugMsg("Initializing users Alice and Bob.")
