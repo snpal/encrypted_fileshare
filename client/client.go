@@ -16,7 +16,6 @@ import (
 	// Useful for string manipulation
 
 	// Useful for formatting strings (e.g. `fmt.Sprintf`).
-	"fmt"
 
 	// Useful for creating new error messages to return using errors.New("...")
 	"errors"
@@ -24,76 +23,6 @@ import (
 	// Optional.
 	_ "strconv"
 )
-
-// This serves two purposes: it shows you a few useful primitives,
-// and suppresses warnings for imports not being used. It can be
-// safely deleted!
-func someUsefulThings() {
-
-	// Creates a random UUID.
-	randomUUID := uuid.New()
-
-	// Prints the UUID as a string. %v prints the value in a default format.
-	// See https://pkg.go.dev/fmt#hdr-Printing for all Golang format string flags.
-	userlib.DebugMsg("Random UUID: %v", randomUUID.String())
-
-	// Creates a UUID deterministically, from a sequence of bytes.
-	hash := userlib.Hash([]byte("user-structs/alice"))
-	deterministicUUID, err := uuid.FromBytes(hash[:16])
-	if err != nil {
-		// Normally, we would `return err` here. But, since this function doesn't return anything,
-		// we can just panic to terminate execution. ALWAYS, ALWAYS, ALWAYS check for errors! Your
-		// code should have hundreds of "if err != nil { return err }" statements by the end of this
-		// project. You probably want to avoid using panic statements in your own code.
-		panic(errors.New("An error occurred while generating a UUID: " + err.Error()))
-	}
-	userlib.DebugMsg("Deterministic UUID: %v", deterministicUUID.String())
-
-	// Declares a Course struct type, creates an instance of it, and marshals it into JSON.
-	type Course struct {
-		name      string
-		professor []byte
-	}
-
-	course := Course{"CS 161", []byte("Nicholas Weaver")}
-	courseBytes, err := json.Marshal(course)
-	if err != nil {
-		panic(err)
-	}
-
-	userlib.DebugMsg("Struct: %v", course)
-	userlib.DebugMsg("JSON Data: %v", courseBytes)
-
-	// Generate a random private/public keypair.
-	// The "_" indicates that we don't check for the error case here.
-	var pk userlib.PKEEncKey
-	var sk userlib.PKEDecKey
-	pk, sk, _ = userlib.PKEKeyGen()
-	userlib.DebugMsg("PKE Key Pair: (%v, %v)", pk, sk)
-
-	// Here's an example of how to use HBKDF to generate a new key from an input key.
-	// Tip: generate a new key everywhere you possibly can! It's easier to generate new keys on the fly
-	// instead of trying to think about all of the ways a key reuse attack could be performed. It's also easier to
-	// store one key and derive multiple keys from that one key, rather than
-	originalKey := userlib.RandomBytes(16)
-	derivedKey, err := userlib.HashKDF(originalKey, []byte("mac-key"))
-	if err != nil {
-		panic(err)
-	}
-	userlib.DebugMsg("Original Key: %v", originalKey)
-	userlib.DebugMsg("Derived Key: %v", derivedKey)
-
-	// A couple of tips on converting between string and []byte:
-	// To convert from string to []byte, use []byte("some-string-here")
-	// To convert from []byte to string for debugging, use fmt.Sprintf("hello world: %s", some_byte_arr).
-	// To convert from []byte to string for use in a hashmap, use hex.EncodeToString(some_byte_arr).
-	// When frequently converting between []byte and string, just marshal and unmarshal the data.
-	//
-	// Read more: https://go.dev/blog/strings
-
-	// Here's an example of string interpolation!
-	_ = fmt.Sprintf("%s_%d", "file", 1)
-}
 
 // This is the type definition for the User struct.
 // A Go struct is like a Python or Java class - it can have attributes
@@ -192,30 +121,6 @@ func _KeyStoreGet(username string, keyType KeyStoreType) (value userlib.PublicKe
 	return result, nil
 }
 
-func _DatastoreSetRaw(location uuid.UUID, payload []byte, key []byte) (err error) {
-	var paddingSize = 1 + int(userlib.RandomBytes(1)[0])%97
-	var padding []byte = make([]byte, paddingSize)
-
-	for i := 0; i < paddingSize; i++ {
-		padding[i] = byte(paddingSize)
-	}
-
-	payload = append(padding, payload...)
-
-	payload = userlib.SymEnc(key, userlib.RandomBytes(16), payload)
-
-	marshalledPayload, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-
-	marshalledPayload = marshalledPayload[1 : len(marshalledPayload)-1]
-
-	userlib.DatastoreSet(location, marshalledPayload)
-
-	return nil
-}
-
 func _DatastoreSet(location uuid.UUID, value interface{}, key []byte) (err error) {
 	payload, err := json.Marshal(value)
 	if err != nil {
@@ -230,35 +135,49 @@ func _DatastoreSet(location uuid.UUID, value interface{}, key []byte) (err error
 
 	payload = append(payload, hmacSig...)
 
-	return _DatastoreSetRaw(location, payload, key[32:48])
+	var paddingSize = 1 + int(userlib.RandomBytes(1)[0])%97
+	var padding []byte = make([]byte, paddingSize)
+
+	for i := 0; i < paddingSize; i++ {
+		padding[i] = byte(paddingSize)
+	}
+
+	payload = append(padding, payload...)
+
+	payload = userlib.SymEnc(key[32:48], userlib.RandomBytes(16), payload)
+
+	marshalledPayload, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+
+	marshalledPayload = marshalledPayload[1 : len(marshalledPayload)-1]
+
+	userlib.DatastoreSet(location, marshalledPayload)
+
+	return nil
 }
 
-func _DatastoreGetRaw(location uuid.UUID, key []byte) (payload []byte, err error) {
+func _DatastoreGet(location uuid.UUID, value interface{}, key []byte) (err error) {
 	marshalledPayload, ok := userlib.DatastoreGet(location)
 	if !ok {
-		return nil, errors.New("entry not found in datastore")
+		return errors.New("entry not found in datastore")
 	}
 
 	marshalledPayload = append([]byte("\""), marshalledPayload...)
 	marshalledPayload = append(marshalledPayload, []byte("\"")...)
 
+	var payload []byte
 	err = json.Unmarshal(marshalledPayload, &payload)
-	if err != nil {
-		return nil, err
-	}
-
-	payload = userlib.SymDec(key, payload)
-
-	var paddingSize = int(payload[0])
-
-	return payload[paddingSize:], nil
-}
-
-func _DatastoreGet(location uuid.UUID, value interface{}, key []byte) (err error) {
-	payload, err := _DatastoreGetRaw(location, key[32:48])
 	if err != nil {
 		return err
 	}
+
+	payload = userlib.SymDec(key[32:48], payload)
+
+	var paddingSize = int(payload[0])
+
+	payload = payload[paddingSize:]
 
 	signature := payload[len(payload)-64:]
 	payload = payload[:len(payload)-64]
@@ -269,7 +188,7 @@ func _DatastoreGet(location uuid.UUID, value interface{}, key []byte) (err error
 	}
 
 	if !userlib.HMACEqual(mySignature, signature) {
-		return errors.New("HMAC Signature mismatch!")
+		return errors.New("hmac Signature mismatch")
 	}
 
 	return json.Unmarshal(userlib.SymDec(key[0:16], payload), value)
@@ -531,20 +450,14 @@ func (userdata *User) CreateInvitation(filename string, recipientUsername string
 
 	invitationPtr = uuid.New()
 
-	storeBuff, err := json.Marshal(invite)
+	payload, err := json.Marshal(invite)
 	if err != nil {
 		return uuid.Nil, err
 	}
 
-	pubEncKey, err := _KeyStoreGet(recipientUsername, KeyTypeEnc)
-	if err != nil {
-		return uuid.Nil, err
-	}
+	var inviteKey []byte = userlib.RandomBytes(32)
 
-	payload, err := userlib.PKEEnc(pubEncKey, storeBuff)
-	if err != nil {
-		return uuid.Nil, err
-	}
+	payload = userlib.SymEnc(inviteKey[0:16], userlib.RandomBytes(16), payload)
 
 	signature, err := userlib.DSSign(userdata.rsa.SigKey, payload)
 	if err != nil {
@@ -553,7 +466,39 @@ func (userdata *User) CreateInvitation(filename string, recipientUsername string
 
 	payload = append(payload, signature...)
 
-	return invitationPtr, _DatastoreSetRaw(invitationPtr, payload, userlib.Hash([]byte(recipientUsername))[:16])
+	var paddingSize = 1 + int(userlib.RandomBytes(1)[0])%97
+	var padding []byte = make([]byte, paddingSize)
+
+	for i := 0; i < paddingSize; i++ {
+		padding[i] = byte(paddingSize)
+	}
+
+	payload = append(padding, payload...)
+
+	payload = userlib.SymEnc(inviteKey[16:32], userlib.RandomBytes(16), payload)
+
+	pubEncKey, err := _KeyStoreGet(recipientUsername, KeyTypeEnc)
+	if err != nil {
+		return uuid.Nil, err
+	}
+
+	encInviteKey, err := userlib.PKEEnc(pubEncKey, inviteKey)
+	if err != nil {
+		return uuid.Nil, err
+	}
+
+	payload = append(encInviteKey, payload...)
+
+	marshalledPayload, err := json.Marshal(payload)
+	if err != nil {
+		return uuid.Nil, err
+	}
+
+	marshalledPayload = marshalledPayload[1 : len(marshalledPayload)-1]
+
+	userlib.DatastoreSet(invitationPtr, marshalledPayload)
+
+	return invitationPtr, nil
 }
 
 func (userdata *User) AcceptInvitation(senderUsername string, invitationPtr uuid.UUID, filename string) (err error) {
@@ -566,10 +511,30 @@ func (userdata *User) AcceptInvitation(senderUsername string, invitationPtr uuid
 		return errors.New("accepting invitation with used filename")
 	}
 
-	payload, err := _DatastoreGetRaw(invitationPtr, userlib.Hash([]byte(userdata.Username))[:16])
+	marshalledPayload, ok := userlib.DatastoreGet(invitationPtr)
+	if !ok {
+		return errors.New("entry not found in datastore")
+	}
+
+	marshalledPayload = append([]byte("\""), marshalledPayload...)
+	marshalledPayload = append(marshalledPayload, []byte("\"")...)
+
+	var payload []byte
+	err = json.Unmarshal(marshalledPayload, &payload)
 	if err != nil {
 		return err
 	}
+
+	inviteKey, err := userlib.PKEDec(userdata.rsa.DecKey, payload[:256])
+	if err != nil {
+		return err
+	}
+
+	payload = userlib.SymDec(inviteKey[16:32], payload[256:])
+
+	var paddingSize = int(payload[0])
+
+	payload = payload[paddingSize:]
 
 	signature := payload[len(payload)-256:]
 	payload = payload[:len(payload)-256]
@@ -584,10 +549,7 @@ func (userdata *User) AcceptInvitation(senderUsername string, invitationPtr uuid
 		return err
 	}
 
-	loadBuff, err := userlib.PKEDec(userdata.rsa.DecKey, payload)
-	if err != nil {
-		return err
-	}
+	loadBuff := userlib.SymDec(inviteKey[:16], payload)
 
 	var invite FileInvite
 	err = json.Unmarshal(loadBuff, &invite)
